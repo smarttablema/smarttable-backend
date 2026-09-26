@@ -2,17 +2,19 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from supabase import create_client, Client
+import httpx
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
 SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
 
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    supabase = None
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+}
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.3")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.4")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -30,65 +32,79 @@ class MenuItemCreate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "database_connected": supabase is not None}
+    return {"status": "online", "brand": "smarttable.ma"}
 
 @app.post("/api/customer/auth")
-def authenticate_customer(data: CustomerAuth):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database client not initialized.")
-    try:
-        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
-        if response.data and len(response.data) > 0:
-            customer = response.data[0]
+async def authenticate_customer(data: CustomerAuth):
+    async with httpx.AsyncClient() as client:
+        # Check if customer exists
+        res = await client.get(
+            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
+            headers=HEADERS
+        )
+        customers = res.json()
+        
+        if customers and len(customers) > 0:
+            customer = customers[0]
         else:
-            new_customer = {"phone_number": data.phone_number, "points_balance": 0}
-            insert_res = supabase.table("customers").insert(new_customer).execute()
-            customer = insert_res.data[0]
+            # Create new customer
+            ins_res = await client.post(
+                f"{SUPABASE_URL}/rest/v1/customers",
+                headers=HEADERS,
+                json={"phone_number": data.phone_number, "points_balance": 0}
+            )
+            created = ins_res.json()
+            customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
+            
         return {"status": "success", "points_balance": customer.get("points_balance", 0)}
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
 
 @app.get("/api/menu/{slug}")
-def get_menu(slug: str):
-    if not supabase:
-        return []
-    try:
-        res = supabase.table("menu_items").select("*").eq("restaurant_slug", slug).execute()
-        return res.data or []
-    except Exception as err:
-        return []
+async def get_menu(slug: str):
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}",
+            headers=HEADERS
+        )
+        return res.json() or []
 
 @app.post("/api/admin/menu/add")
-def add_menu_item(item: MenuItemCreate):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database client not initialized.")
-    try:
-        res = supabase.table("menu_items").insert({
-            "restaurant_slug": item.restaurant_slug,
-            "category": item.category,
-            "name": item.name,
-            "price": item.price,
-            "image_url": item.image_url
-        }).execute()
-        return {"status": "success", "message": "Item added successfully!"}
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
+async def add_menu_item(item: MenuItemCreate):
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            f"{SUPABASE_URL}/rest/v1/menu_items",
+            headers=HEADERS,
+            json={
+                "restaurant_slug": item.restaurant_slug,
+                "category": item.category,
+                "name": item.name,
+                "price": item.price,
+                "image_url": item.image_url
+            }
+        )
+        return {"status": "success", "message": "Item added to live menu!"}
 
 @app.post("/api/rewards/claim-review")
-def claim_google_review(data: ReviewReward):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database client not initialized.")
-    try:
-        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
-        if not response.data:
+async def claim_google_review(data: ReviewReward):
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
+            headers=HEADERS
+        )
+        customers = res.json()
+        if not customers:
             raise HTTPException(status_code=404, detail="Customer not found.")
-        customer = response.data[0]
+        
+        customer = customers[0]
         new_balance = customer.get("points_balance", 0) + 50
-        supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
-        return {"status": "success", "new_balance": new_balance, "message": "50 points added!"}
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
+        
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
+            headers=HEADERS,
+            json={"points_balance": new_balance}
+        )
+        return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
 
+# --- UNIFIED MOBILE & OWNER ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
