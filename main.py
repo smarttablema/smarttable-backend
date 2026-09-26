@@ -6,12 +6,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-DATABASE_URL = "postgresql://neondb_owner:npg_7aYbfrQdjcq6@ep-cold-lake-b1djlrzp-pooler.c-5.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQdjcq6@ep-cold-lake-b1djlrzp-pooler.c-5.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.0.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.1.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -158,15 +158,6 @@ def add_reward(reward: RewardCreate):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS custom_rewards (
-                id SERIAL PRIMARY KEY,
-                restaurant_slug TEXT DEFAULT 'default-restaurant',
-                title TEXT NOT NULL,
-                points_required INTEGER NOT NULL,
-                image_url TEXT DEFAULT ''
-            );
-        """)
         cur.execute(
             "INSERT INTO custom_rewards (restaurant_slug, title, points_required, image_url) VALUES (%s, %s, %s, %s);",
             (reward.restaurant_slug, reward.title, reward.points_required, reward.image_url)
@@ -196,14 +187,6 @@ def get_tiers(slug: str):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS restaurant_tiers (
-                id SERIAL PRIMARY KEY,
-                restaurant_slug TEXT DEFAULT 'default-restaurant',
-                name TEXT NOT NULL,
-                min_points INTEGER NOT NULL
-            );
-        """)
         cur.execute("SELECT * FROM restaurant_tiers WHERE restaurant_slug = %s ORDER BY min_points ASC;", (slug,))
         tiers = cur.fetchall()
         cur.close()
@@ -227,14 +210,6 @@ def add_tier(tier: TierCreate):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS restaurant_tiers (
-                id SERIAL PRIMARY KEY,
-                restaurant_slug TEXT DEFAULT 'default-restaurant',
-                name TEXT NOT NULL,
-                min_points INTEGER NOT NULL
-            );
-        """)
         cur.execute(
             "INSERT INTO restaurant_tiers (restaurant_slug, name, min_points) VALUES (%s, %s, %s);",
             (tier.restaurant_slug, tier.name, tier.min_points)
@@ -288,16 +263,6 @@ def redeem_reward(data: dict):
         
         v_code = str(random.randint(1000, 9999))
         
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS active_vouchers (
-                id SERIAL PRIMARY KEY,
-                code TEXT UNIQUE,
-                phone_number TEXT,
-                reward_title TEXT,
-                image_url TEXT,
-                status TEXT DEFAULT 'active'
-            );
-        """)
         cur.execute("INSERT INTO active_vouchers (code, phone_number, reward_title, image_url) VALUES (%s, %s, %s, %s);", (v_code, phone, title, img))
         conn.commit()
         cur.close()
@@ -393,7 +358,7 @@ def serve_mobile_frontend():
             --bg-deep: #090d16;
             --surface: #131c31;
             --surface-card: #1a2642;
-            --accent: #f59e0b; /* Moroccan Gold */
+            --accent: #f59e0b;
             --accent-glow: rgba(245, 158, 11, 0.2);
             --primary: #38bdf8;
             --text-main: #f8fafc;
@@ -453,7 +418,6 @@ def serve_mobile_frontend():
         .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
-        /* Professional Modals */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
         .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -489,7 +453,6 @@ def serve_mobile_frontend():
             <button class="tab-btn hidden" id="admin-tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
         </div>
 
-        <!-- REWARDS TAB -->
         <div id="tab-rewards">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Loyalty Portal</h3>
@@ -525,7 +488,6 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- MENU TAB -->
         <div id="tab-menu" class="card hidden">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
                 <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">Live Menu</h3>
@@ -536,7 +498,6 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- OWNER ADMIN TAB -->
         <div id="tab-admin" class="card hidden">
             <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🔒 Owner Control Center</h3>
             
@@ -580,7 +541,6 @@ def serve_mobile_frontend():
         <div id="feedback-msg" class="message-box hidden"></div>
     </div>
 
-    <!-- Professional Voucher Success Modal -->
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
@@ -592,7 +552,6 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- Image Zoom Modal -->
     <div id="image-modal" class="modal">
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
@@ -728,7 +687,6 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 if(res.ok) {
                     document.getElementById('points-val').innerText = data.new_balance;
-                    // Show professional modal instead of ugly alert
                     document.getElementById('modal-voucher-code').innerText = data.voucher_code;
                     document.getElementById('modal-voucher-title').innerText = data.reward_title;
                     document.getElementById('modal-voucher-img').src = data.image_url;
@@ -1024,10 +982,3 @@ def serve_mobile_frontend():
     </script>
 </body>
 </html>
-    ```
-
-### What You Will See Now:
-1. **Zero Browser Alerts**: When a customer redeems points, an ultra-sleek, professional popup modal opens with a clear 4-digit code and thumbnail image—no ugly browser alert box!
-2. **Owner Loyalty Tiers Manager**: Right in the Owner Control Center (`/?mode=admin`), there is now a dedicated **Manage Loyalty Tiers** section where the owner can create custom tiers (e.g., *Double Burger Tier* for 100+ points), view them, and delete them instantly.
-
-Commit this code to GitHub and watch your app transform into a flawless masterpiece for your clients!
