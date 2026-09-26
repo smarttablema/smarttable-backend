@@ -1,20 +1,16 @@
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-import httpx
 
-SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_secret_d6gyKBWup5RXtRq8rvA2uw_Rsqgp7mK"
+DATABASE_URL = "postgresql://neondb_owner:npg_7aYbfrQdjcq6@ep-cold-lake-b1djlrzp-pooler.c-5.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-}
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.5.1")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="4.0.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -32,98 +28,84 @@ class MenuItemCreate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "brand": "smarttable.ma"}
+    return {"status": "online", "database": "neon-postgres", "brand": "smarttable.ma"}
 
 @app.post("/api/customer/auth")
-async def authenticate_customer(data: CustomerAuth):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS
+def authenticate_customer(data: CustomerAuth):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
+        customer = cur.fetchone()
+        
+        if not customer:
+            cur.execute(
+                "INSERT INTO customers (phone_number, points_balance) VALUES (%s, 0) RETURNING *;",
+                (data.phone_number,)
             )
-            if res.status_code != 200:
-                raise HTTPException(status_code=res.status_code, detail=f"Supabase error: {res.text}")
-                
-            customers = res.json()
+            customer = cur.fetchone()
+            conn.commit()
             
-            if customers and len(customers) > 0:
-                customer = customers[0]
-            else:
-                ins_res = await client.post(
-                    f"{SUPABASE_URL}/rest/v1/customers",
-                    headers=HEADERS,
-                    json={"phone_number": data.phone_number, "points_balance": 0}
-                )
-                if ins_res.status_code not in [200, 201]:
-                    raise HTTPException(status_code=ins_res.status_code, detail=f"Insert error: {ins_res.text}")
-                    
-                created = ins_res.json()
-                customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
-                
-            return {"status": "success", "points_balance": customer.get("points_balance", 0)}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        cur.close()
+        conn.close()
+        
+        return {"status": "success", "points_balance": customer["points_balance"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
-async def get_menu(slug: str):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}",
-                headers=HEADERS
-            )
-            return res.json() or []
-        except Exception:
-            return []
+def get_menu(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM menu_items WHERE restaurant_slug = %s;", (slug,))
+        items = cur.fetchall()
+        cur.close()
+        conn.close()
+        return items or []
+    except Exception:
+        return []
 
 @app.post("/api/admin/menu/add")
-async def add_menu_item(item: MenuItemCreate):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.post(
-                f"{SUPABASE_URL}/rest/v1/menu_items",
-                headers=HEADERS,
-                json={
-                    "restaurant_slug": item.restaurant_slug,
-                    "category": item.category,
-                    "name": item.name,
-                    "price": item.price,
-                    "image_url": item.image_url
-                }
-            )
-            if res.status_code not in [200, 201]:
-                raise HTTPException(status_code=res.status_code, detail=res.text)
-            return {"status": "success", "message": "Item added to live menu!"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+def add_menu_item(item: MenuItemCreate):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO menu_items (restaurant_slug, category, name, price, image_url) VALUES (%s, %s, %s, %s, %s);",
+            (item.restaurant_slug, item.category, item.name, item.price, item.image_url)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Item added to live menu!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rewards/claim-review")
-async def claim_google_review(data: ReviewReward):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS
-            )
-            customers = res.json()
-            if not customers:
-                raise HTTPException(status_code=404, detail="Customer not found.")
+def claim_google_review(data: ReviewReward):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
+        customer = cur.fetchone()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found.")
             
-            customer = customers[0]
-            new_balance = customer.get("points_balance", 0) + 50
-            
-            patch_res = await client.patch(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS,
-                json={"points_balance": new_balance}
-            )
-            if patch_res.status_code not in [200, 204]:
-                raise HTTPException(status_code=patch_res.status_code, detail=patch_res.text)
-                
-            return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        new_balance = customer["points_balance"] + 50
+        cur.execute(
+            "UPDATE customers SET points_balance = %s WHERE phone_number = %s;",
+            (new_balance, data.phone_number)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- UNIFIED MOBILE & OWNER ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
