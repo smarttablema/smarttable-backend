@@ -11,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.6.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.0.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -380,7 +380,7 @@ def serve_mobile_frontend():
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
         body { background-color: var(--bg-deep); color: var(--text-main); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 1rem; background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-deep) 70%); }
         
-        .app-frame { width: 100%; max-width: 410px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
+        .app-frame { width: 100%; max-width: 420px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
         .brand-header { text-align: center; margin-bottom: 1.25rem; }
         .logo { font-size: 1.65rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
@@ -388,7 +388,7 @@ def serve_mobile_frontend():
         .brand-tag { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-top: 2px; font-weight: 600; }
         
         .nav-tabs { display: flex; background: var(--bg-deep); border-radius: 14px; padding: 5px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
-        .tab-btn { flex: 1; padding: 0.6rem; text-align: center; border-radius: 10px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
+        .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 10px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
         .tab-btn.active { background: var(--surface-card); color: var(--text-main); box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid var(--border); }
         
         .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); }
@@ -443,22 +443,27 @@ def serve_mobile_frontend():
         .message-box { margin-top: 0.75rem; padding: 0.75rem; border-radius: 10px; font-size: 0.8rem; text-align: center; font-weight: 600; }
         .success-msg { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
         .error-msg { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        
+        .admin-subnav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
+        .admin-sub-btn { padding: 0.5rem 0.2rem; text-align: center; border-radius: 8px; font-size: 0.68rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
+        .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); }
     </style>
 </head>
 <body>
     <div class="app-frame">
         <div class="brand-header">
             <div class="logo">SmartTable<span>.ma</span></div>
-            <div class="brand-tag">Table Experience & Loyalty</div>
+            <div class="brand-tag" id="app-subtitle">Table Experience & Loyalty</div>
         </div>
         
-        <div class="nav-tabs">
+        <!-- CLIENT TABS -->
+        <div class="nav-tabs" id="client-nav">
             <button class="tab-btn active" onclick="switchTab('rewards')">🏆 Rewards</button>
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
-            <button class="tab-btn hidden" id="admin-tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
         </div>
 
-        <div id="tab-rewards">
+        <!-- CLIENT: REWARDS TAB -->
+        <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Loyalty Portal</h3>
                 <label>Phone Number</label>
@@ -468,7 +473,7 @@ def serve_mobile_frontend():
             
             <div id="dashboard-section" class="card hidden">
                 <div class="points-display">
-                    <div class="tier-badge" id="customer-tier-badge">S-Tier VIP Burger</div>
+                    <div class="tier-badge" id="customer-tier-badge">Classic Member</div>
                     <div class="points-label">Your Balance</div>
                     <div class="points-number" id="points-val">0</div>
                     <div class="cashback-badge">⚡ 10% Cashback Active</div>
@@ -493,79 +498,122 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <div id="tab-menu" class="card hidden">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-                <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">Live Menu</h3>
-                <span style="font-size: 0.7rem; color: var(--text-muted);">Tap to zoom</span>
-            </div>
-            <div id="menu-container" class="menu-grid">
-                <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
+        <!-- CLIENT: MENU TAB -->
+        <div id="tab-menu" class="client-view hidden">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
+                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">Live Menu</h3>
+                    <span style="font-size: 0.7rem; color: var(--text-muted);">Tap to zoom</span>
+                </div>
+                <div id="menu-container" class="menu-grid">
+                    <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
+                </div>
             </div>
         </div>
 
-        <div id="tab-admin" class="card hidden">
-            <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🔒 Owner Control Center</h3>
-            
-            <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
-                <label style="color: var(--success); margin-bottom: 0.25rem;">Customer Directory & Broadcast Hub</label>
-                <div id="customer-count-badge" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Registered Clients: Loading...</div>
-                <div id="admin-customers-list" style="max-height: 90px; overflow-y: auto; margin-bottom: 0.75rem; background: var(--surface); padding: 6px; border-radius: 8px;"></div>
-                <button class="btn-main" onclick="copyCustomerNumbers()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 0.5rem;">📋 Copy All Client Phone Numbers</button>
-                <textarea id="broadcast-msg-input" rows="2" placeholder="Promo announcement text..."></textarea>
-                <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Share Campaign to WhatsApp Group/List</button>
+        <!-- OWNER CONTROL CENTER (PRO DASHBOARD) -->
+        <div id="tab-admin" class="hidden">
+            <div class="admin-subnav">
+                <button class="admin-sub-btn active" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">📢 Broadcast</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">📖 Menu</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">🎁 Rewards</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">👑 Tiers</button>
             </div>
 
-            <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
-                <label style="color: var(--success); margin-bottom: 0.25rem;">Validate Customer Voucher</label>
-                <input type="text" id="voucher-input" placeholder="Enter 4-digit code (e.g. 4892)" style="margin-bottom: 0.5rem;" />
-                <button class="btn-main" onclick="validateVoucher()" style="background: var(--success); color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 0.75rem;">Verify Code</button>
-                <div id="voucher-result" class="hidden" style="text-align: center; border-top: 1px solid var(--border); padding-top: 0.5rem;">
-                    <img id="v-img" style="width: 60px; height: 60px; border-radius: 10px; object-fit: cover; margin-bottom: 4px;" />
-                    <div id="v-title" style="font-size: 0.85rem; font-weight: 700; color: var(--success);"></div>
-                    <div id="v-phone" style="font-size: 0.7rem; color: var(--text-muted);"></div>
+            <!-- 1. CAMPAIGNS & VALIDATION -->
+            <div id="admin-sub-campaigns" class="admin-section">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📢 Client Communications</h3>
+                    <div id="customer-count-badge" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Registered Clients: Loading...</div>
+                    <div id="admin-customers-list" style="max-height: 80px; overflow-y: auto; margin-bottom: 0.75rem; background: var(--bg-deep); padding: 6px; border-radius: 8px; border: 1px solid var(--border);"></div>
+                    <button class="btn-main" onclick="copyCustomerNumbers()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.75rem; margin-bottom: 0.75rem;">📋 Copy All Client Phone Numbers</button>
+                    
+                    <label>WhatsApp Broadcast</label>
+                    <textarea id="broadcast-msg-input" rows="2" placeholder="Promo announcement text..."></textarea>
+                    <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Broadcast via WhatsApp</button>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">✓ Validate Customer Voucher</h3>
+                    <label>4-Digit Voucher Code</label>
+                    <input type="text" id="voucher-input" placeholder="e.g. 4892" style="margin-bottom: 0.5rem;" />
+                    <button class="btn-main" onclick="validateVoucher()" style="background: var(--success); color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 0.5rem;">Verify & Redeem Code</button>
+                    <div id="voucher-result" class="hidden" style="text-align: center; border-top: 1px solid var(--border); padding-top: 0.5rem;">
+                        <img id="v-img" style="width: 50px; height: 50px; border-radius: 8px; object-fit: cover; margin-bottom: 4px;" />
+                        <div id="v-title" style="font-size: 0.8rem; font-weight: 700; color: var(--success);"></div>
+                        <div id="v-phone" style="font-size: 0.65rem; color: var(--text-muted);"></div>
+                    </div>
                 </div>
             </div>
 
-            <label>Manage Loyalty Tiers</label>
-            <input type="text" id="tier-name-input" placeholder="Tier Name (e.g. Double Burger Tier)" />
-            <input type="number" id="tier-points-input" placeholder="Min Points Required (e.g. 100)" />
-            <button class="btn-main" onclick="addTier()" style="background: var(--accent); color: #090d16; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 0.75rem;">+ Create Loyalty Tier</button>
-            <div id="admin-tiers-list" style="max-height: 90px; overflow-y: auto; margin-bottom: 1rem;"></div>
+            <!-- 2. MENU EDITOR -->
+            <div id="admin-sub-menu" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
+                    <label>Category</label>
+                    <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
+                    <label>Item Name</label>
+                    <input type="text" id="admin-name" placeholder="Item Name" />
+                    <label>Price (MAD)</label>
+                    <input type="text" id="admin-price" placeholder="e.g. 65" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="admin-img" placeholder="https://..." />
+                    <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
+                    
+                    <label>Existing Items:</label>
+                    <div id="admin-menu-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
 
-            <label>Add Custom Reward</label>
-            <input type="text" id="reward-title-input" placeholder="Reward Title (e.g. Free Dessert)" />
-            <input type="number" id="reward-cost-input" placeholder="Points Required (e.g. 100)" />
-            <input type="text" id="reward-img-input" placeholder="Image URL (optional)" />
-            <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
-            
-            <label>Manage Rewards:</label>
-            <div id="admin-rewards-list" style="max-height: 100px; overflow-y: auto; margin-bottom: 1rem;"></div>
+            <!-- 3. REWARDS EDITOR -->
+            <div id="admin-sub-rewards" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
+                    <label>Reward Title</label>
+                    <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
+                    <label>Points Required</label>
+                    <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="reward-img-input" placeholder="https://..." />
+                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
+                    
+                    <label>Configured Rewards:</label>
+                    <div id="admin-rewards-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
 
-            <label>Add Menu Item</label>
-            <input type="text" id="admin-cat" placeholder="Category (e.g., Burgers)" />
-            <input type="text" id="admin-name" placeholder="Item Name" />
-            <input type="text" id="admin-price" placeholder="Price in numbers (e.g. 65)" />
-            <input type="text" id="admin-img" placeholder="Image URL (optional)" />
-            <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.5rem; font-size: 0.8rem;">+ Add to Menu</button>
-            
-            <label>Manage Menu Items:</label>
-            <div id="admin-menu-list" style="max-height: 120px; overflow-y: auto;"></div>
+            <!-- 4. TIERS EDITOR -->
+            <div id="admin-sub-tiers" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">👑 Loyalty Tiers Builder</h3>
+                    <label>Tier Name</label>
+                    <input type="text" id="tier-name-input" placeholder="e.g. S-Tier VIP Burger" />
+                    <label>Min Points Required</label>
+                    <input type="number" id="tier-points-input" placeholder="e.g. 250" />
+                    <button class="btn-main" onclick="addTier()" style="background: var(--accent); color: #090d16; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Tier</button>
+                    
+                    <label>Active Tiers:</label>
+                    <div id="admin-tiers-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
         </div>
 
         <div id="feedback-msg" class="message-box hidden"></div>
     </div>
 
+    <!-- VOUCHER MODAL -->
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
             <p style="font-size: 0.75rem; color: var(--text-muted);">Show this code to your waiter:</p>
             <div id="modal-voucher-code" class="voucher-code-box">----</div>
-            <img id="modal-voucher-img" class="modal-img" src="" style="height: 140px; margin-bottom: 0.5rem;" />
+            <img id="modal-voucher-img" class="modal-img" src="" style="height: 130px; margin-bottom: 0.5rem;" />
             <div id="modal-voucher-title" style="font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;"></div>
             <button class="close-modal" onclick="closeVoucherModal()">Done</button>
         </div>
     </div>
 
+    <!-- IMAGE PREVIEW MODAL -->
     <div id="image-modal" class="modal">
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
@@ -583,21 +631,23 @@ def serve_mobile_frontend():
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
-                const adminBtn = document.getElementById('admin-tab-btn');
-                if(adminBtn) adminBtn.classList.remove('hidden');
-                switchTab('admin');
+                document.getElementById('client-nav').classList.add('hidden');
+                document.getElementById('tab-rewards').classList.add('hidden');
+                document.getElementById('tab-admin').classList.remove('hidden');
+                document.getElementById('app-subtitle').innerText = "Owner Control Center";
+                loadAdminCustomers();
+                loadAdminMenu();
+                loadAdminRewards();
+                loadAdminTiers();
+            } else {
+                loadMenu();
             }
         };
 
         function switchTab(tabName) {
-            document.querySelectorAll('.tab-btn').forEach(b => {
-                if(b.id !== 'admin-tab-btn' || !b.classList.contains('hidden')) {
-                    b.classList.remove('active');
-                }
-            });
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-rewards').classList.add('hidden');
             document.getElementById('tab-menu').classList.add('hidden');
-            document.getElementById('tab-admin').classList.add('hidden');
             
             if(tabName === 'rewards') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
@@ -607,22 +657,23 @@ def serve_mobile_frontend():
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-menu').classList.remove('hidden');
                 loadMenu();
-            } else {
-                const adminBtn = document.getElementById('admin-tab-btn');
-                if(adminBtn) adminBtn.classList.add('active');
-                document.getElementById('tab-admin').classList.remove('hidden');
-                loadAdminCustomers();
-                loadAdminMenu();
-                loadAdminRewards();
-                loadAdminTiers();
             }
+        }
+
+        function switchAdminSub(subName) {
+            ['campaigns', 'menu', 'rewards', 'tiers'].forEach(s => {
+                document.getElementById('sub-btn-' + s).classList.remove('active');
+                document.getElementById('admin-sub-' + s).classList.add('hidden');
+            });
+            document.getElementById('sub-btn-' + subName).classList.add('active');
+            document.getElementById('admin-sub-' + subName).classList.remove('hidden');
         }
 
         async function loadAdminCustomers() {
             try {
                 const res = await fetch('/api/admin/customers');
                 cachedCustomers = await res.json();
-                document.getElementById('customer-count-badge').innerText = `Registered Clients: ${cachedCustomers.length} total`;
+                document.getElementById('customer-count-badge').innerText = 'Registered Clients: ' + cachedCustomers.length + ' total';
                 const container = document.getElementById('admin-customers-list');
                 if(!cachedCustomers || cachedCustomers.length === 0) {
                     container.innerHTML = '<div style="color:var(--text-muted); font-size:0.7rem; text-align:center;">No clients registered yet.</div>';
@@ -646,13 +697,13 @@ def serve_mobile_frontend():
             }
             const numbers = cachedCustomers.map(c => c.phone_number).join(', ');
             navigator.clipboard.writeText(numbers);
-            alert('Copied ' + cachedCustomers.length + ' client phone numbers to clipboard! You can now paste them into WhatsApp Web or a broadcast tool.');
+            alert('Copied ' + cachedCustomers.length + ' client phone numbers to clipboard!');
         }
 
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
             if(!msg) { alert('Please enter a broadcast message.'); return; }
-            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\n\n" + msg);
+            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
         }
 
