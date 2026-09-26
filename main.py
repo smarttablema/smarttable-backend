@@ -1,11 +1,13 @@
 import os
+import json
+import urllib.request
+import urllib.error
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-import httpx
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
+SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -14,7 +16,7 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.3")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.4")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -35,84 +37,80 @@ def health_check():
     return {"status": "online", "brand": "smarttable.ma"}
 
 @app.post("/api/customer/auth")
-async def authenticate_customer(data: CustomerAuth):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS
-            )
-            customers = res.json()
+def authenticate_customer(data: CustomerAuth):
+    try:
+        # Check if customer exists
+        url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
+        req = urllib.request.Request(url, headers=HEADERS, method="GET")
+        with urllib.request.urlopen(req) as response:
+            customers = json.loads(response.read().decode())
+        
+        if customers and len(customers) > 0:
+            customer = customers[0]
+        else:
+            # Create new customer
+            ins_url = f"{SUPABASE_URL}/rest/v1/customers"
+            payload = json.dumps({"phone_number": data.phone_number, "points_balance": 0}).encode('utf-8')
+            ins_req = urllib.request.Request(ins_url, data=payload, headers=HEADERS, method="POST")
+            with urllib.request.urlopen(ins_req) as ins_response:
+                created = json.loads(ins_response.read().decode())
+            customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
             
-            if customers and len(customers) > 0:
-                customer = customers[0]
-            else:
-                ins_res = await client.post(
-                    f"{SUPABASE_URL}/rest/v1/customers",
-                    headers=HEADERS,
-                    json={"phone_number": data.phone_number, "points_balance": 0}
-                )
-                created = ins_res.json()
-                customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
-                
-            return {"status": "success", "points_balance": customer.get("points_balance", 0)}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "success", "points_balance": customer.get("points_balance", 0)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
-async def get_menu(slug: str):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}",
-                headers=HEADERS
-            )
-            return res.json() or []
-        except Exception:
-            return []
+def get_menu(slug: str):
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}"
+        req = urllib.request.Request(url, headers=HEADERS, method="GET")
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode()) or []
+    except Exception:
+        return []
 
 @app.post("/api/admin/menu/add")
-async def add_menu_item(item: MenuItemCreate):
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(
-                f"{SUPABASE_URL}/rest/v1/menu_items",
-                headers=HEADERS,
-                json={
-                    "restaurant_slug": item.restaurant_slug,
-                    "category": item.category,
-                    "name": item.name,
-                    "price": item.price,
-                    "image_url": item.image_url
-                }
-            )
-            return {"status": "success", "message": "Item added to live menu!"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+def add_menu_item(item: MenuItemCreate):
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/menu_items"
+        payload = json.dumps({
+            "restaurant_slug": item.restaurant_slug,
+            "category": item.category,
+            "name": item.name,
+            "price": item.price,
+            "image_url": item.image_url
+        }).encode('utf-8')
+        req = urllib.request.Request(url, data=payload, headers=HEADERS, method="POST")
+        with urllib.request.urlopen(req) as response:
+            pass
+        return {"status": "success", "message": "Item added to live menu!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rewards/claim-review")
-async def claim_google_review(data: ReviewReward):
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS
-            )
-            customers = res.json()
-            if not customers:
-                raise HTTPException(status_code=404, detail="Customer not found.")
+def claim_google_review(data: ReviewReward):
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
+        req = urllib.request.Request(url, headers=HEADERS, method="GET")
+        with urllib.request.urlopen(req) as response:
+            customers = json.loads(response.read().decode())
+        
+        if not customers:
+            raise HTTPException(status_code=404, detail="Customer not found.")
+        
+        customer = customers[0]
+        new_balance = customer.get("points_balance", 0) + 50
+        
+        patch_url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
+        patch_payload = json.dumps({"points_balance": new_balance}).encode('utf-8')
+        patch_req = urllib.request.Request(patch_url, data=patch_payload, headers=HEADERS, method="PATCH")
+        with urllib.request.urlopen(patch_req) as patch_response:
+            pass
             
-            customer = customers[0]
-            new_balance = customer.get("points_balance", 0) + 50
-            
-            await client.patch(
-                f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-                headers=HEADERS,
-                json={"points_balance": new_balance}
-            )
-            return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- UNIFIED MOBILE & OWNER ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
