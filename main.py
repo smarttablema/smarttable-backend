@@ -5,14 +5,14 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
+SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
     supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.5")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.6")
 
 class CustomerAuth(BaseModel):
     phone_number: str
