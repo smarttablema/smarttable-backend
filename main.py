@@ -2,19 +2,17 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-import httpx
+from supabase import create_client, Client
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
 SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
 
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-}
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.4")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.5")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -32,79 +30,64 @@ class MenuItemCreate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "brand": "smarttable.ma"}
+    return {"status": "online", "db_active": supabase is not None}
 
 @app.post("/api/customer/auth")
-async def authenticate_customer(data: CustomerAuth):
-    async with httpx.AsyncClient() as client:
-        # Check if customer exists
-        res = await client.get(
-            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-            headers=HEADERS
-        )
-        customers = res.json()
-        
-        if customers and len(customers) > 0:
-            customer = customers[0]
+def authenticate_customer(data: CustomerAuth):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
+    try:
+        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+        if response.data and len(response.data) > 0:
+            customer = response.data[0]
         else:
-            # Create new customer
-            ins_res = await client.post(
-                f"{SUPABASE_URL}/rest/v1/customers",
-                headers=HEADERS,
-                json={"phone_number": data.phone_number, "points_balance": 0}
-            )
-            created = ins_res.json()
-            customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
-            
+            ins_res = supabase.table("customers").insert({"phone_number": data.phone_number, "points_balance": 0}).execute()
+            customer = ins_res.data[0]
         return {"status": "success", "points_balance": customer.get("points_balance", 0)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
-async def get_menu(slug: str):
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}",
-            headers=HEADERS
-        )
-        return res.json() or []
+def get_menu(slug: str):
+    if not supabase:
+        return []
+    try:
+        res = supabase.table("menu_items").select("*").eq("restaurant_slug", slug).execute()
+        return res.data or []
+    except Exception as e:
+        return []
 
 @app.post("/api/admin/menu/add")
-async def add_menu_item(item: MenuItemCreate):
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"{SUPABASE_URL}/rest/v1/menu_items",
-            headers=HEADERS,
-            json={
-                "restaurant_slug": item.restaurant_slug,
-                "category": item.category,
-                "name": item.name,
-                "price": item.price,
-                "image_url": item.image_url
-            }
-        )
-        return {"status": "success", "message": "Item added to live menu!"}
+def add_menu_item(item: MenuItemCreate):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
+    try:
+        res = supabase.table("menu_items").insert({
+            "restaurant_slug": item.restaurant_slug,
+            "category": item.category,
+            "name": item.name,
+            "price": item.price,
+            "image_url": item.image_url
+        }).execute()
+        return {"status": "success", "message": "Item added successfully!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rewards/claim-review")
-async def claim_google_review(data: ReviewReward):
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-            headers=HEADERS
-        )
-        customers = res.json()
-        if not customers:
+def claim_google_review(data: ReviewReward):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
+    try:
+        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+        if not response.data:
             raise HTTPException(status_code=404, detail="Customer not found.")
-        
-        customer = customers[0]
+        customer = response.data[0]
         new_balance = customer.get("points_balance", 0) + 50
-        
-        await client.patch(
-            f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
-            headers=HEADERS,
-            json={"points_balance": new_balance}
-        )
-        return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
+        supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
+        return {"status": "success", "new_balance": new_balance, "message": "50 points added!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# --- UNIFIED MOBILE & OWNER ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -224,7 +207,7 @@ def serve_mobile_frontend():
         }
         async function loadMenu() {
             try {
-                const res = await fetch(`/api/menu/${currentSlug}`);
+                const res = await fetch('/api/menu/' + currentSlug);
                 const items = await res.json();
                 const container = document.getElementById('menu-container');
                 if(!items || items.length === 0) {
