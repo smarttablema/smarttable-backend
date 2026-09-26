@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
@@ -11,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.0.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.2.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -54,13 +55,18 @@ def health_check():
 
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
+    phone = data.phone_number.strip()
+    # Global validation: accepts international formats (+ optional) and 8 to 15 digits total length
+    clean_phone = re.sub(r'[\s\-\(\)]', '', phone)
+    if not re.match(r'^\+?\d{8,15}$', clean_phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number format. Please enter a valid mobile number (8 to 15 digits).")
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
         customer = cur.fetchone()
         if not customer:
-            cur.execute("INSERT INTO customers (phone_number, points_balance, has_purchased) VALUES (%s, 0, FALSE) RETURNING *;", (data.phone_number,))
+            cur.execute("INSERT INTO customers (phone_number, points_balance, has_purchased) VALUES (%s, 0, FALSE) RETURNING *;", (clean_phone,))
             customer = cur.fetchone()
             conn.commit()
         cur.close()
@@ -329,17 +335,21 @@ def claim_google_review(data: ReviewReward):
 
 @app.post("/api/rewards/refer-friend")
 def refer_friend(data: ReferralCreate):
+    friend = data.friend_phone.strip()
+    clean_friend = re.sub(r'[\s\-\(\)]', '', friend)
+    if not re.match(r'^\+?\d{8,15}$', clean_friend):
+        raise HTTPException(status_code=400, detail="Invalid friend phone number format.")
     try:
-        if data.referrer_phone == data.friend_phone:
+        if data.referrer_phone == clean_friend:
             raise HTTPException(status_code=400, detail="You cannot refer your own number.")
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.friend_phone,))
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_friend,))
         if cur.fetchone():
             raise HTTPException(status_code=400, detail="This friend already has an account.")
         cur.execute(
             "INSERT INTO customers (phone_number, points_balance, referred_by, has_purchased) VALUES (%s, 0, %s, FALSE);",
-            (data.friend_phone, data.referrer_phone)
+            (clean_friend, data.referrer_phone)
         )
         conn.commit()
         cur.close()
@@ -440,16 +450,18 @@ def serve_mobile_frontend():
         .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; }
         .edit-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-right: 6px; }
 
-        .message-box { margin-top: 0.75rem; padding: 0.75rem; border-radius: 10px; font-size: 0.8rem; text-align: center; font-weight: 600; }
-        .success-msg { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
-        .error-msg { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
-        
+        /* Professional Toast Notification */
+        #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(100px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 24px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; box-shadow: 0 10px 25px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; }
+        #toast-banner.show { transform: translateX(-50%) translateY(0); }
+
         .admin-subnav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
         .admin-sub-btn { padding: 0.5rem 0.2rem; text-align: center; border-radius: 8px; font-size: 0.68rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); }
     </style>
 </head>
 <body>
+    <div id="toast-banner">✓ Action completed successfully!</div>
+
     <div class="app-frame">
         <div class="brand-header">
             <div class="logo">SmartTable<span>.ma</span></div>
@@ -466,8 +478,8 @@ def serve_mobile_frontend():
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Loyalty Portal</h3>
-                <label>Phone Number</label>
-                <input type="tel" id="phone-input" placeholder="e.g., 06XXXXXXXX" />
+                <label>Phone Number (Local or International)</label>
+                <input type="tel" id="phone-input" placeholder="e.g., 0612345678 or +33..." />
                 <button class="btn-main" onclick="loginCustomer()">Access My Account</button>
             </div>
             
@@ -597,8 +609,6 @@ def serve_mobile_frontend():
                 </div>
             </div>
         </div>
-
-        <div id="feedback-msg" class="message-box hidden"></div>
     </div>
 
     <!-- VOUCHER MODAL -->
@@ -643,6 +653,13 @@ def serve_mobile_frontend():
                 loadMenu();
             }
         };
+
+        function showToast(text) {
+            const t = document.getElementById('toast-banner');
+            t.innerText = text;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3500);
+        }
 
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -692,19 +709,20 @@ def serve_mobile_frontend():
 
         function copyCustomerNumbers() {
             if(!cachedCustomers || cachedCustomers.length === 0) {
-                alert('No client numbers to copy.');
+                showToast('❌ No client numbers to copy.');
                 return;
             }
             const numbers = cachedCustomers.map(c => c.phone_number).join(', ');
             navigator.clipboard.writeText(numbers);
-            alert('Copied ' + cachedCustomers.length + ' client phone numbers to clipboard!');
+            showToast('📋 Copied ' + cachedCustomers.length + ' phone numbers!');
         }
 
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
-            if(!msg) { alert('Please enter a broadcast message.'); return; }
+            if(!msg) { showToast('❌ Please enter a message.'); return; }
             const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
+            showToast('🚀 Opening WhatsApp Broadcast...');
         }
 
         async function loadMenu() {
@@ -792,11 +810,12 @@ def serve_mobile_frontend():
                     document.getElementById('modal-voucher-img').src = data.image_url;
                     document.getElementById('voucher-modal').style.display = 'flex';
                     loadCustomerData();
+                    showToast('🎉 Reward unlocked successfully!');
                 } else {
-                    alert(data.detail || 'Redemption failed.');
+                    showToast('❌ ' + (data.detail || 'Redemption failed.'));
                 }
             } catch(e) {
-                alert('Connection error.');
+                showToast('❌ Connection error.');
             }
         }
 
@@ -807,7 +826,7 @@ def serve_mobile_frontend():
         async function validateVoucher() {
             const code = document.getElementById('voucher-input').value;
             const resBox = document.getElementById('voucher-result');
-            if(!code) { alert('Enter voucher code.'); return; }
+            if(!code) { showToast('❌ Enter voucher code.'); return; }
             try {
                 const res = await fetch('/api/admin/validate-voucher', {
                     method: 'POST',
@@ -821,19 +840,20 @@ def serve_mobile_frontend():
                     document.getElementById('v-phone').innerText = "Client Phone: " + data.phone_number;
                     resBox.classList.remove('hidden');
                     document.getElementById('voucher-input').value = '';
+                    showToast('✓ Voucher successfully validated!');
                 } else {
                     resBox.classList.add('hidden');
-                    alert(data.detail || 'Invalid code');
+                    showToast('❌ ' + (data.detail || 'Invalid code'));
                 }
             } catch(e) {
-                alert('Error validating code');
+                showToast('❌ Error validating code');
             }
         }
 
         async function addTier() {
             const name = document.getElementById('tier-name-input').value;
             const min_points = document.getElementById('tier-points-input').value;
-            if(!name || !min_points) { alert('Fill in tier name and minimum points.'); return; }
+            if(!name || !min_points) { showToast('❌ Fill in tier name and points.'); return; }
             try {
                 const res = await fetch('/api/admin/tiers/add', {
                     method: 'POST',
@@ -841,12 +861,12 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, name, min_points: parseInt(min_points) })
                 });
                 const data = await res.json();
-                showMsg(data.message, 'success-msg');
+                showToast('✓ ' + data.message);
                 document.getElementById('tier-name-input').value = '';
                 document.getElementById('tier-points-input').value = '';
                 loadAdminTiers();
             } catch(e) {
-                alert('Error adding tier.');
+                showToast('❌ Error adding tier.');
             }
         }
 
@@ -873,8 +893,9 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/tiers/' + id, { method: 'DELETE' });
                 loadAdminTiers();
+                showToast('✓ Tier deleted.');
             } catch(e) {
-                alert('Error deleting tier.');
+                showToast('❌ Error deleting tier.');
             }
         }
 
@@ -882,7 +903,7 @@ def serve_mobile_frontend():
             const title = document.getElementById('reward-title-input').value;
             const points_required = document.getElementById('reward-cost-input').value;
             const image_url = document.getElementById('reward-img-input').value;
-            if(!title || !points_required) { alert('Fill in title and points.'); return; }
+            if(!title || !points_required) { showToast('❌ Fill in title and points.'); return; }
             try {
                 const res = await fetch('/api/admin/rewards/add', {
                     method: 'POST',
@@ -890,13 +911,13 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, title, points_required: parseInt(points_required), image_url })
                 });
                 const data = await res.json();
-                showMsg(data.message, 'success-msg');
+                showToast('✓ ' + data.message);
                 document.getElementById('reward-title-input').value = '';
                 document.getElementById('reward-cost-input').value = '';
                 document.getElementById('reward-img-input').value = '';
                 loadAdminRewards();
             } catch(e) {
-                alert('Error adding reward.');
+                showToast('❌ Error adding reward.');
             }
         }
 
@@ -923,8 +944,9 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/rewards/' + id, { method: 'DELETE' });
                 loadAdminRewards();
+                showToast('✓ Reward deleted.');
             } catch(e) {
-                alert('Error deleting reward.');
+                showToast('❌ Error deleting reward.');
             }
         }
 
@@ -965,7 +987,7 @@ def serve_mobile_frontend():
             const name = document.getElementById('admin-name').value;
             const price = document.getElementById('admin-price').value;
             const image_url = document.getElementById('admin-img').value;
-            if(!category || !name || !price) { alert('Fill category, name, price.'); return; }
+            if(!category || !name || !price) { showToast('❌ Fill category, name, price.'); return; }
             try {
                 const res = await fetch('/api/admin/menu/add', {
                     method: 'POST',
@@ -973,14 +995,14 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, category, name, price, image_url })
                 });
                 const data = await res.json();
-                showMsg(data.message, 'success-msg');
+                showToast('✓ ' + data.message);
                 document.getElementById('admin-cat').value = '';
                 document.getElementById('admin-name').value = '';
                 document.getElementById('admin-price').value = '';
                 document.getElementById('admin-img').value = '';
                 loadAdminMenu();
             } catch(e) {
-                alert('Error adding item.');
+                showToast('❌ Error adding item.');
             }
         }
 
@@ -994,10 +1016,10 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ price: newPrice })
                 });
                 const data = await res.json();
-                showMsg(data.message, 'success-msg');
+                showToast('✓ ' + data.message);
                 loadAdminMenu();
             } catch(e) {
-                alert('Error updating price.');
+                showToast('❌ Error updating price.');
             }
         }
 
@@ -1006,20 +1028,26 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/menu/' + id, { method: 'DELETE' });
                 loadAdminMenu();
+                showToast('✓ Item removed.');
             } catch(e) {
-                alert('Error deleting item.');
+                showToast('❌ Error deleting item.');
             }
         }
 
         async function loginCustomer() {
-            const phone = document.getElementById('phone-input').value;
-            if(!phone) { alert('Enter phone number.'); return; }
-            currentPhone = phone;
+            const phone = document.getElementById('phone-input').value.trim();
+            const clean = phone.replace(/[\\s\\-\\(\\)]/g, '');
+            const globalRegex = /^\\+?\\d{8,15}$/;
+            if(!globalRegex.test(clean)) {
+                showToast('❌ Please enter a valid mobile number (8 to 15 digits)');
+                return;
+            }
+            currentPhone = clean;
             try {
                 const res = await fetch('/api/customer/auth', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone, restaurant_slug: currentSlug })
+                    body: JSON.stringify({ phone_number: clean, restaurant_slug: currentSlug })
                 });
                 const data = await res.json();
                 if(res.ok) {
@@ -1027,12 +1055,12 @@ def serve_mobile_frontend():
                     document.getElementById('login-section').classList.add('hidden');
                     document.getElementById('dashboard-section').classList.remove('hidden');
                     loadCustomerData();
-                    showMsg('Welcome!', 'success-msg');
+                    showToast('👋 Welcome back!');
                 } else {
-                    showMsg(data.detail || 'Login failed', 'error-msg');
+                    showToast('❌ ' + (data.detail || 'Login failed'));
                 }
             } catch(e) {
-                showMsg('Connection error', 'error-msg');
+                showToast('❌ Connection error');
             }
         }
 
@@ -1046,38 +1074,36 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 document.getElementById('points-val').innerText = data.new_balance;
                 loadCustomerData();
-                showMsg(data.message, 'success-msg');
+                showToast('⭐ ' + data.message);
             } catch(e) {
-                showMsg('Error claiming points', 'error-msg');
+                showToast('❌ Error claiming points');
             }
         }
 
         async function referFriend() {
-            const friendPhone = document.getElementById('friend-phone').value;
-            if(!friendPhone) { alert("Enter friend's phone number."); return; }
+            const friendPhone = document.getElementById('friend-phone').value.trim();
+            const cleanFriend = friendPhone.replace(/[\\s\\-\\(\\)]/g, '');
+            const globalRegex = /^\\+?\\d{8,15}$/;
+            if(!globalRegex.test(cleanFriend)) {
+                showToast('❌ Invalid friend phone format (8 to 15 digits)');
+                return;
+            }
             try {
                 const res = await fetch('/api/rewards/refer-friend', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: friendPhone })
+                    body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: cleanFriend })
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    showMsg(data.message, 'success-msg');
+                    showToast('✓ ' + data.message);
                     document.getElementById('friend-phone').value = '';
                 } else {
-                    showMsg(data.detail || 'Error referring friend', 'error-msg');
+                    showToast('❌ ' + (data.detail || 'Error referring friend'));
                 }
             } catch(e) {
-                showMsg('Connection error', 'error-msg');
+                showToast('❌ Connection error');
             }
-        }
-
-        function showMsg(text, className) {
-            const box = document.getElementById('feedback-msg');
-            box.innerText = text;
-            box.className = 'message-box ' + className;
-            setTimeout(() => box.classList.add('hidden'), 4000);
         }
     </script>
 </body>
