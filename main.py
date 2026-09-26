@@ -14,7 +14,7 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.2")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.3")
 
 class CustomerAuth(BaseModel):
     phone_number: str
