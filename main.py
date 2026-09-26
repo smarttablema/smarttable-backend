@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.5.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.6.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -501,9 +501,12 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        .admin-subnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
-        .admin-sub-btn { padding: 0.5rem 0.1rem; text-align: center; border-radius: 8px; font-size: 0.6rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
-        .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); }
+        /* Perfectly Aligned Enterprise Icon Grid Sub-nav */
+        .admin-subnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: var(--bg-deep); padding: 6px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.62rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 1.15rem; margin-bottom: 2px; display: block; line-height: 1; }
+        .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; }
+        .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
     </style>
 </head>
 <body>
@@ -572,13 +575,23 @@ def serve_mobile_frontend():
 
         <!-- OWNER CONTROL CENTER (PRO DASHBOARD) -->
         <div id="tab-admin" class="hidden">
-            <!-- Reordered Owner Tabs: Menu, Rewards, Tiers, Broadcast, Settings -->
+            <!-- Perfectly Aligned Icon Grid Sub-nav (Menu, Rewards, Tiers, Broadcast, Settings) -->
             <div class="admin-subnav">
-                <button class="admin-sub-btn active" onclick="switchAdminSub('menu')" id="sub-btn-menu">📖 Menu</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">🎁 Rewards</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">👑 Tiers</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">📢 Broadcast</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">⚙️ Settings</button>
+                <button class="admin-sub-btn active" onclick="switchAdminSub('menu')" id="sub-btn-menu">
+                    <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
+                    <span class="nav-icon">🎁</span><span class="nav-text">Rewards</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">
+                    <span class="nav-icon">👑</span><span class="nav-text">Tiers</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">
+                    <span class="nav-icon">📢</span><span class="nav-text">Broadcast</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">
+                    <span class="nav-icon">⚙️</span><span class="nav-text">Settings</span>
+                </button>
             </div>
 
             <!-- 1. MENU EDITOR -->
