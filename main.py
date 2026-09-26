@@ -12,7 +12,7 @@ try:
 except Exception:
     supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.0.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -30,7 +30,7 @@ class MenuItemCreate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "brand": "smarttable.ma", "message": "SaaS platform engine running."}
+    return {"status": "online", "brand": "smarttable.ma", "message": "Production engine running."}
 
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
@@ -63,7 +63,7 @@ def add_menu_item(item: MenuItemCreate):
         "price": item.price,
         "image_url": item.image_url
     }).execute()
-    return {"status": "success", "message": "Menu item added successfully!"}
+    return {"status": "success", "message": "Item added to live menu!"}
 
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
@@ -77,7 +77,7 @@ def claim_google_review(data: ReviewReward):
     supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
     return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
 
-# --- UNIFIED MOBILE & ADMIN UI ---
+# --- UNIFIED MOBILE & OWNER ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -86,7 +86,9 @@ def serve_mobile_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartTable.ma - Interactive Dining</title>
+    <title>SmartTable.ma - Table Experience</title>
+    <!-- Professional Browser Tab Logo (Favicon) -->
+    <link rel="icon" type="image/png" href="https://img.icons8.com/color/48/qr-code.png">
     <style>
         :root {
             --bg-color: #0f172a;
@@ -106,11 +108,11 @@ def serve_mobile_frontend():
         .brand-tag { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
 
         .nav-tabs { display: flex; background: #0f172a; border-radius: 12px; padding: 4px; margin-bottom: 1rem; border: 1px solid #1e293b; }
-        .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 8px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: 0.2s; }
+        .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 8px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: 0.2s; }
         .tab-btn.active { background: var(--accent); color: #0f172a; }
 
         .card { background: #0f172a; border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid #1e293b; }
-        input, select { width: 100%; padding: 0.75rem; border-radius: 10px; border: 1px solid #475569; background: #1e293b; color: white; font-size: 0.9rem; margin-bottom: 0.75rem; outline: none; }
+        input { width: 100%; padding: 0.75rem; border-radius: 10px; border: 1px solid #475569; background: #1e293b; color: white; font-size: 0.9rem; margin-bottom: 0.75rem; outline: none; }
         input:focus { border-color: var(--accent); }
         button.action-submit { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: var(--accent); color: #0f172a; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
         
@@ -118,7 +120,6 @@ def serve_mobile_frontend():
         .points-number { font-size: 2.5rem; font-weight: 900; color: var(--success); text-align: center; margin: 0.5rem 0; }
         .action-btn { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: #334155; color: white; font-weight: 600; cursor: pointer; margin-top: 0.5rem; }
         
-        /* Menu item card layout with photos */
         .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 350px; overflow-y: auto; padding-right: 4px; }
         .menu-card { display: flex; align-items: center; background: #1e293b; border-radius: 12px; padding: 0.75rem; border: 1px solid #334155; gap: 0.75rem; }
         .menu-img { width: 50px; height: 50px; border-radius: 8px; object-fit: cover; background: #334155; }
@@ -138,10 +139,11 @@ def serve_mobile_frontend():
             <div class="brand-tag">Table Experience</div>
         </div>
 
-        <div class="nav-tabs">
+        <div class="nav-tabs" id="nav-tabs-container">
             <button class="tab-btn active" onclick="switchTab('rewards')">🏆 Rewards</button>
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
-            <button class="tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
+            <!-- Owner tab is hidden by default for customers, unlocked via owner NFC card link -->
+            <button class="tab-btn hidden" id="admin-tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
         </div>
 
         <!-- TAB 1: REWARDS -->
@@ -183,8 +185,21 @@ def serve_mobile_frontend():
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
 
+        // Check if the URL has the owner mode parameter when scanned from owner's exclusive NFC card
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if(urlParams.get('mode') === 'admin') {
+                document.getElementById('admin-tab-btn').classList.remove('hidden');
+                switchTab('admin');
+            }
+        };
+
         function switchTab(tabName) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                if(b.id !== 'admin-tab-btn' || !b.classList.contains('hidden')) {
+                    b.classList.remove('active');
+                }
+            });
             document.getElementById('tab-rewards').classList.add('hidden');
             document.getElementById('tab-menu').classList.add('hidden');
             document.getElementById('tab-admin').classList.add('hidden');
@@ -197,7 +212,7 @@ def serve_mobile_frontend():
                 document.getElementById('tab-menu').classList.remove('hidden');
                 loadMenu();
             } else {
-                document.querySelectorAll('.tab-btn')[2].classList.add('active');
+                document.getElementById('admin-tab-btn').classList.add('active');
                 document.getElementById('tab-admin').classList.remove('hidden');
             }
         }
