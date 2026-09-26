@@ -11,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.5.2")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.6.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -68,6 +68,19 @@ def authenticate_customer(data: CustomerAuth):
         return {"status": "success", "points_balance": customer["points_balance"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/customers")
+def get_customers():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT phone_number, points_balance, created_at FROM customers ORDER BY id DESC;")
+        customers = cur.fetchall()
+        cur.close()
+        conn.close()
+        return customers or []
+    except Exception:
+        return []
 
 @app.get("/api/menu/{slug}")
 def get_menu(slug: str):
@@ -494,9 +507,12 @@ def serve_mobile_frontend():
             <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🔒 Owner Control Center</h3>
             
             <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
-                <label style="color: var(--success); margin-bottom: 0.25rem;">Broadcast WhatsApp Campaign</label>
-                <textarea id="broadcast-msg-input" rows="3" placeholder="Type announcement (e.g. Free dessert tonight for members!)"></textarea>
-                <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Send WhatsApp Broadcast</button>
+                <label style="color: var(--success); margin-bottom: 0.25rem;">Customer Directory & Broadcast Hub</label>
+                <div id="customer-count-badge" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Registered Clients: Loading...</div>
+                <div id="admin-customers-list" style="max-height: 90px; overflow-y: auto; margin-bottom: 0.75rem; background: var(--surface); padding: 6px; border-radius: 8px;"></div>
+                <button class="btn-main" onclick="copyCustomerNumbers()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 0.5rem;">📋 Copy All Client Phone Numbers</button>
+                <textarea id="broadcast-msg-input" rows="2" placeholder="Promo announcement text..."></textarea>
+                <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Share Campaign to WhatsApp Group/List</button>
             </div>
 
             <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
@@ -562,6 +578,7 @@ def serve_mobile_frontend():
     <script>
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
+        let cachedCustomers = [];
         
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
@@ -594,16 +611,48 @@ def serve_mobile_frontend():
                 const adminBtn = document.getElementById('admin-tab-btn');
                 if(adminBtn) adminBtn.classList.add('active');
                 document.getElementById('tab-admin').classList.remove('hidden');
+                loadAdminCustomers();
                 loadAdminMenu();
                 loadAdminRewards();
                 loadAdminTiers();
             }
         }
 
+        async function loadAdminCustomers() {
+            try {
+                const res = await fetch('/api/admin/customers');
+                cachedCustomers = await res.json();
+                document.getElementById('customer-count-badge').innerText = `Registered Clients: ${cachedCustomers.length} total`;
+                const container = document.getElementById('admin-customers-list');
+                if(!cachedCustomers || cachedCustomers.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.7rem; text-align:center;">No clients registered yet.</div>';
+                    return;
+                }
+                container.innerHTML = cachedCustomers.map(c => `
+                    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; padding: 2px 0; border-bottom: 1px solid var(--border);">
+                        <span style="color: var(--primary);">📱 ${c.phone_number}</span>
+                        <span style="color: var(--success);">${c.points_balance} pts</span>
+                    </div>
+                `).join('');
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function copyCustomerNumbers() {
+            if(!cachedCustomers || cachedCustomers.length === 0) {
+                alert('No client numbers to copy.');
+                return;
+            }
+            const numbers = cachedCustomers.map(c => c.phone_number).join(', ');
+            navigator.clipboard.writeText(numbers);
+            alert('Copied ' + cachedCustomers.length + ' client phone numbers to clipboard! You can now paste them into WhatsApp Web or a broadcast tool.');
+        }
+
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
             if(!msg) { alert('Please enter a broadcast message.'); return; }
-            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
+            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\n\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
         }
 
