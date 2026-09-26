@@ -1,5 +1,6 @@
 import os
 import random
+import urllib.parse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
@@ -11,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.4.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.5.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -23,10 +24,6 @@ class ReviewReward(BaseModel):
 class ReferralCreate(BaseModel):
     referrer_phone: str
     friend_phone: str
-
-class PurchaseLog(BaseModel):
-    phone_number: str
-    amount_spent: float
 
 class MenuItemCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
@@ -51,6 +48,9 @@ class TierCreate(BaseModel):
 
 class VoucherValidate(BaseModel):
     code: str
+
+class BroadcastMessage(BaseModel):
+    message: str
 
 @app.get("/api/health")
 def health_check():
@@ -385,8 +385,8 @@ def serve_mobile_frontend():
         .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); }
         
         label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        input { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; }
-        input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        input, textarea { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
+        input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
         
         .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
         .btn-main:active { transform: scale(0.98); }
@@ -434,14 +434,10 @@ def serve_mobile_frontend():
         .message-box { margin-top: 0.75rem; padding: 0.75rem; border-radius: 10px; font-size: 0.8rem; text-align: center; font-weight: 600; }
         .success-msg { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
         .error-msg { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
-
-        .proximity-banner { background: linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(16, 185, 129, 0.15) 100%); border: 1px solid var(--primary); padding: 0.75rem; border-radius: 12px; font-size: 0.78rem; text-align: center; color: var(--primary); margin-bottom: 1rem; font-weight: 600; display: none; }
     </style>
 </head>
 <body>
     <div class="app-frame">
-        <div id="geo-banner" class="proximity-banner">📍 You are 50m away! Drop in for 10% cashback today!</div>
-        
         <div class="brand-header">
             <div class="logo">SmartTable<span>.ma</span></div>
             <div class="brand-tag">Table Experience & Loyalty</div>
@@ -501,6 +497,12 @@ def serve_mobile_frontend():
         <div id="tab-admin" class="card hidden">
             <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🔒 Owner Control Center</h3>
             
+            <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
+                <label style="color: var(--success); margin-bottom: 0.25rem;">Broadcast WhatsApp Campaign</label>
+                <textarea id="broadcast-msg-input" rows="3" placeholder="Type announcement (e.g. Free dessert tonight for members!)"></textarea>
+                <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Send WhatsApp Broadcast</button>
+            </div>
+
             <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
                 <label style="color: var(--success); margin-bottom: 0.25rem;">Validate Customer Voucher</label>
                 <input type="text" id="voucher-input" placeholder="Enter 4-digit code (e.g. 4892)" style="margin-bottom: 0.5rem;" />
@@ -572,11 +574,6 @@ def serve_mobile_frontend():
                 if(adminBtn) adminBtn.classList.remove('hidden');
                 switchTab('admin');
             }
-            if(navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(() => {
-                    document.getElementById('geo-banner').style.display = 'block';
-                }, () => {});
-            }
         };
 
         function switchTab(tabName) {
@@ -605,6 +602,13 @@ def serve_mobile_frontend():
                 loadAdminRewards();
                 loadAdminTiers();
             }
+        }
+
+        function sendWhatsAppBroadcast() {
+            const msg = document.getElementById('broadcast-msg-input').value.trim();
+            if(!msg) { alert('Please enter a broadcast message.'); return; }
+            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\n\n" + msg);
+            window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
         }
 
         async function loadMenu() {
@@ -953,7 +957,7 @@ def serve_mobile_frontend():
         }
 
         async function referFriend() {
-            const friendPhone = document.getElementById('friend-phone').value;
+            const friendPhone = document.getElementById('friend-phone':).value;
             if(!friendPhone) { alert("Enter friend's phone number."); return; }
             try {
                 const res = await fetch('/api/rewards/refer-friend', {
