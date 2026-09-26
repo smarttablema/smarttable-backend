@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
+SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -16,7 +16,7 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.4")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.5")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -39,7 +39,6 @@ def health_check():
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
     try:
-        # Check if customer exists
         url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
         req = urllib.request.Request(url, headers=HEADERS, method="GET")
         with urllib.request.urlopen(req) as response:
@@ -48,7 +47,6 @@ def authenticate_customer(data: CustomerAuth):
         if customers and len(customers) > 0:
             customer = customers[0]
         else:
-            # Create new customer
             ins_url = f"{SUPABASE_URL}/rest/v1/customers"
             payload = json.dumps({"phone_number": data.phone_number, "points_balance": 0}).encode('utf-8')
             ins_req = urllib.request.Request(ins_url, data=payload, headers=HEADERS, method="POST")
