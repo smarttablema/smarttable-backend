@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import httpx
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
+SUPABASE_KEY = "sb_secret_d6gyKBWup5RXtRq8rvA2uw_Rsqgp7mK"
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -14,7 +14,7 @@ HEADERS = {
     "Prefer": "return=representation"
 }
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.4.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.5.1")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -42,8 +42,6 @@ async def authenticate_customer(data: CustomerAuth):
                 f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}",
                 headers=HEADERS
             )
-            print(f"Supabase GET status: {res.status_code}, body: {res.text}")
-            
             if res.status_code != 200:
                 raise HTTPException(status_code=res.status_code, detail=f"Supabase error: {res.text}")
                 
@@ -57,7 +55,6 @@ async def authenticate_customer(data: CustomerAuth):
                     headers=HEADERS,
                     json={"phone_number": data.phone_number, "points_balance": 0}
                 )
-                print(f"Supabase INSERT status: {ins_res.status_code}, body: {ins_res.text}")
                 if ins_res.status_code not in [200, 201]:
                     raise HTTPException(status_code=ins_res.status_code, detail=f"Insert error: {ins_res.text}")
                     
@@ -66,7 +63,6 @@ async def authenticate_customer(data: CustomerAuth):
                 
             return {"status": "success", "points_balance": customer.get("points_balance", 0)}
         except Exception as e:
-            print(f"EXCEPTION in auth: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
@@ -78,8 +74,7 @@ async def get_menu(slug: str):
                 headers=HEADERS
             )
             return res.json() or []
-        except Exception as e:
-            print(f"EXCEPTION in menu: {str(e)}")
+        except Exception:
             return []
 
 @app.post("/api/admin/menu/add")
