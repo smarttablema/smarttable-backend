@@ -11,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.2.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.3.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -984,4 +984,4 @@ def serve_mobile_frontend():
 </html>
     ```
 
-Commit this into your GitHub repo, and Railway will build successfully in seconds!
+Once you paste this into GitHub, Railway will compile cleanly and turn green instantly!
