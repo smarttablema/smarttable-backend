@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.4.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.5.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -362,7 +362,6 @@ def claim_google_review(data: ReviewReward):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Fetch dynamic review points set by owner
         cur.execute("SELECT review_points FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
         s = cur.fetchone()
         review_pts = s["review_points"] if s else 50
@@ -573,16 +572,68 @@ def serve_mobile_frontend():
 
         <!-- OWNER CONTROL CENTER (PRO DASHBOARD) -->
         <div id="tab-admin" class="hidden">
+            <!-- Reordered Owner Tabs: Menu, Rewards, Tiers, Broadcast, Settings -->
             <div class="admin-subnav">
-                <button class="admin-sub-btn active" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">📢 Broadcast</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">⚙️ Settings</button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">📖 Menu</button>
+                <button class="admin-sub-btn active" onclick="switchAdminSub('menu')" id="sub-btn-menu">📖 Menu</button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">🎁 Rewards</button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">👑 Tiers</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">📢 Broadcast</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">⚙️ Settings</button>
             </div>
 
-            <!-- 1. CAMPAIGNS & VALIDATION -->
-            <div id="admin-sub-campaigns" class="admin-section">
+            <!-- 1. MENU EDITOR -->
+            <div id="admin-sub-menu" class="admin-section">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
+                    <label>Category</label>
+                    <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
+                    <label>Item Name</label>
+                    <input type="text" id="admin-name" placeholder="Item Name" />
+                    <label>Price (MAD)</label>
+                    <input type="text" id="admin-price" placeholder="e.g. 65" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="admin-img" placeholder="https://..." />
+                    <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
+                    
+                    <label>Existing Items:</label>
+                    <div id="admin-menu-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- 2. REWARDS BUILDER -->
+            <div id="admin-sub-rewards" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
+                    <label>Reward Title</label>
+                    <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
+                    <label>Points Required</label>
+                    <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="reward-img-input" placeholder="https://..." />
+                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
+                    
+                    <label>Configured Rewards:</label>
+                    <div id="admin-rewards-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- 3. LOYALTY TIERS BUILDER -->
+            <div id="admin-sub-tiers" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">👑 Loyalty Tiers Builder</h3>
+                    <label>Tier Name</label>
+                    <input type="text" id="tier-name-input" placeholder="e.g. S-Tier VIP Burger" />
+                    <label>Min Points Required</label>
+                    <input type="number" id="tier-points-input" placeholder="e.g. 250" />
+                    <button class="btn-main" onclick="addTier()" style="background: var(--accent); color: #090d16; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Tier</button>
+                    
+                    <label>Active Tiers:</label>
+                    <div id="admin-tiers-list" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- 4. BROADCAST & VALIDATION -->
+            <div id="admin-sub-campaigns" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📢 Client Communications</h3>
                     <div id="customer-count-badge" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Registered Clients: Loading...</div>
@@ -607,7 +658,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 2. CAMPAIGN POINT RULES SETTINGS -->
+            <!-- 5. SETTINGS -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign Reward Points</h3>
@@ -616,57 +667,6 @@ def serve_mobile_frontend():
                     <label>Friend Referral Points</label>
                     <input type="number" id="setting-referral-pts" placeholder="e.g. 50" />
                     <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem;">Save Point Rules</button>
-                </div>
-            </div>
-
-            <!-- 3. MENU EDITOR -->
-            <div id="admin-sub-menu" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
-                    <label>Category</label>
-                    <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
-                    <label>Item Name</label>
-                    <input type="text" id="admin-name" placeholder="Item Name" />
-                    <label>Price (MAD)</label>
-                    <input type="text" id="admin-price" placeholder="e.g. 65" />
-                    <label>Image URL (Optional)</label>
-                    <input type="text" id="admin-img" placeholder="https://..." />
-                    <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
-                    
-                    <label>Existing Items:</label>
-                    <div id="admin-menu-list" style="max-height: 180px; overflow-y: auto;"></div>
-                </div>
-            </div>
-
-            <!-- 4. REWARDS EDITOR -->
-            <div id="admin-sub-rewards" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
-                    <label>Reward Title</label>
-                    <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
-                    <label>Points Required</label>
-                    <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
-                    <label>Image URL (Optional)</label>
-                    <input type="text" id="reward-img-input" placeholder="https://..." />
-                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
-                    
-                    <label>Configured Rewards:</label>
-                    <div id="admin-rewards-list" style="max-height: 180px; overflow-y: auto;"></div>
-                </div>
-            </div>
-
-            <!-- 5. TIERS EDITOR -->
-            <div id="admin-sub-tiers" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">👑 Loyalty Tiers Builder</h3>
-                    <label>Tier Name</label>
-                    <input type="text" id="tier-name-input" placeholder="e.g. S-Tier VIP Burger" />
-                    <label>Min Points Required</label>
-                    <input type="number" id="tier-points-input" placeholder="e.g. 250" />
-                    <button class="btn-main" onclick="addTier()" style="background: var(--accent); color: #090d16; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Tier</button>
-                    
-                    <label>Active Tiers:</label>
-                    <div id="admin-tiers-list" style="max-height: 180px; overflow-y: auto;"></div>
                 </div>
             </div>
         </div>
@@ -790,7 +790,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['campaigns', 'settings', 'menu', 'rewards', 'tiers'].forEach(s => {
+            ['menu', 'rewards', 'tiers', 'campaigns', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
