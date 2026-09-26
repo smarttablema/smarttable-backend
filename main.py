@@ -1,6 +1,5 @@
 import os
 import random
-import urllib.parse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
@@ -12,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.5.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.5.2")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -48,9 +47,6 @@ class TierCreate(BaseModel):
 
 class VoucherValidate(BaseModel):
     code: str
-
-class BroadcastMessage(BaseModel):
-    message: str
 
 @app.get("/api/health")
 def health_check():
@@ -607,7 +603,7 @@ def serve_mobile_frontend():
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
             if(!msg) { alert('Please enter a broadcast message.'); return; }
-            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\n\n" + msg);
+            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
         }
 
@@ -623,7 +619,7 @@ def serve_mobile_frontend():
                 container.innerHTML = items.map(item => {
                     const imgSrc = item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
                     return `
-                        <div class="menu-card" onclick="openModal('${imgSrc}', '${item.name.replace(/'/g, "\\'")}', '${item.price}')">
+                        <div class="menu-card" onclick="openModal('${imgSrc}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')">
                             <img src="${imgSrc}" class="menu-img" />
                             <div class="menu-info">
                                 <div class="menu-cat">${item.category}</div>
@@ -957,7 +953,7 @@ def serve_mobile_frontend():
         }
 
         async function referFriend() {
-            const friendPhone = document.getElementById('friend-phone':).value;
+            const friendPhone = document.getElementById('friend-phone').value;
             if(!friendPhone) { alert("Enter friend's phone number."); return; }
             try {
                 const res = await fetch('/api/rewards/refer-friend', {
