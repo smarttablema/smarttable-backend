@@ -1,54 +1,75 @@
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from supabase import create_client, Client
 
-app = FastAPI(title="SmartTable.ma Production API", version="2.0.0")
+# Direct Supabase Configuration for smarttable.ma
+SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
+SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
+
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception:
+    supabase = None
+
+app = FastAPI(title="SmartTable.ma Production API", version="2.1.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
     restaurant_slug: str = "default-restaurant"
 
 class ReviewReward(BaseModel):
-    customer_id: int
-    restaurant_id: int = 1
-
-class Redemption(BaseModel):
-    customer_id: int
-    restaurant_id: int = 1
-    points_to_redeem: int
+    phone_number: str
 
 # --- API ENDPOINTS ---
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "brand": "smarttable.ma", "message": "Loyalty engine is running smoothly."}
+    return {"status": "online", "brand": "smarttable.ma", "message": "Supabase-connected loyalty engine is running."}
 
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured.")
+    
+    # Check if customer exists in Supabase
+    response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+    
+    if response.data and len(response.data) > 0:
+        customer = response.data[0]
+    else:
+        # Create new customer if they don't exist
+        new_customer = {"phone_number": data.phone_number, "points_balance": 0}
+        insert_res = supabase.table("customers").insert(new_customer).execute()
+        customer = insert_res.data[0]
+
     return {
         "status": "success",
-        "customer_id": 1,
-        "phone": data.phone_number,
-        "points_balance": 120  # Sample initial balance for demo
+        "customer_id": customer.get("id"),
+        "phone": customer.get("phone_number"),
+        "points_balance": customer.get("points_balance", 0)
     }
 
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured.")
+    
+    response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Customer not found.")
+    
+    customer = response.data[0]
+    new_balance = customer.get("points_balance", 0) + 50
+    
+    supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
+
     return {
         "status": "success",
         "added_points": 50,
-        "new_balance": 170,
+        "new_balance": new_balance,
         "message": "Review verified! 50 points added to your account."
     }
-
-@app.post("/api/rewards/redeem")
-def redeem_points(data: Redemption):
-    return {
-        "status": "success",
-        "redeemed": data.points_to_redeem,
-        "remaining_balance": max(0, 120 - data.points_to_redeem),
-        "message": "Reward successfully claimed!"
-    }
-
 
 # --- EMBEDDED MOBILE FRONTEND UI ---
 @app.get("/", response_class=HTMLResponse)
@@ -96,14 +117,12 @@ def serve_mobile_frontend():
         <div class="logo">SmartTable.ma</div>
         <div class="subtitle">Tap. Earn. Enjoy Exclusive Rewards.</div>
 
-        <!-- STEP 1: LOGIN -->
         <div id="login-section" class="card">
             <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Enter to View Points</h3>
             <input type="tel" id="phone-input" placeholder="Phone Number (e.g., 06XXXXXXXX)" />
             <button onclick="loginCustomer()">Access My Account</button>
         </div>
 
-        <!-- STEP 2: DASHBOARD (HIDDEN INITIALLY) -->
         <div id="dashboard-section" class="card hidden">
             <div class="points-display">
                 <div class="points-label">Your Balance</div>
@@ -111,31 +130,31 @@ def serve_mobile_frontend():
                 <div style="font-size: 0.8rem; color: var(--text-muted);">Points Available</div>
             </div>
             <button class="action-btn" onclick="claimReview()">⭐ Leave Google Review (+50 pts)</button>
-            <button class="action-btn" onclick="redeemReward()">🎁 Redeem Free Coffee/Item</button>
         </div>
 
         <div id="feedback-msg" class="message-box hidden"></div>
     </div>
 
     <script>
-        let currentCustomerId = 1;
+        let currentPhone = '';
 
         async function loginCustomer() {
-            const phone = document.getElementById('phone-input').value;
+            const phone = document.getElementById('phone-input'].value;
             if(!phone) { alert('Please enter your phone number.'); return; }
+            currentPhone = phone;
 
             try {
                 const res = await fetch('/api/customer/auth', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone, restaurant_slug: 'demo-rest' })
+                    body: JSON.stringify({ phone_number: phone })
                 });
                 const data = await res.json();
                 
                 document.getElementById('points-val').innerText = data.points_balance;
                 document.getElementById('login-section').classList.add('hidden');
                 document.getElementById('dashboard-section').classList.remove('hidden');
-                showMsg('Welcome back!', 'success-msg');
+                showMsg('Welcome!', 'success-msg');
             } catch(e) {
                 alert('Connection error. Please try again.');
             }
@@ -146,28 +165,13 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/rewards/claim-review', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ customer_id: currentCustomerId })
+                    body: JSON.stringify({ phone_number: currentPhone })
                 });
                 const data = await res.json();
                 document.getElementById('points-val').innerText = data.new_balance;
                 showMsg(data.message, 'success-msg');
             } catch(e) {
                 alert('Error claiming reward.');
-            }
-        }
-
-        async function redeemReward() {
-            try {
-                const res = await fetch('/api/rewards/redeem', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ customer_id: currentCustomerId, points_to_redeem: 50 })
-                });
-                const data = await res.json();
-                document.getElementById('points-val').innerText = data.remaining_balance;
-                showMsg(data.message, 'success-msg');
-            } catch(e) {
-                alert('Error redeeming points.');
             }
         }
 
