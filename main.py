@@ -11,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.3.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="7.4.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -982,6 +982,9 @@ def serve_mobile_frontend():
     </script>
 </body>
 </html>
-    ```
+    """
 
-Once you paste this into GitHub, Railway will compile cleanly and turn green instantly!
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
