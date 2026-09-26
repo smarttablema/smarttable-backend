@@ -4,7 +4,6 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from supabase import create_client, Client
 
-# Direct Supabase Configuration for smarttable.ma
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
 SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
 
@@ -13,7 +12,7 @@ try:
 except Exception:
     supabase = None
 
-app = FastAPI(title="SmartTable.ma Production API", version="2.1.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.0.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -22,56 +21,63 @@ class CustomerAuth(BaseModel):
 class ReviewReward(BaseModel):
     phone_number: str
 
-# --- API ENDPOINTS ---
+class MenuItemCreate(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    category: str
+    name: str
+    price: str
+    image_url: str = ""
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "brand": "smarttable.ma", "message": "Supabase-connected loyalty engine is running."}
+    return {"status": "online", "brand": "smarttable.ma", "message": "SaaS platform engine running."}
 
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured.")
-    
-    # Check if customer exists in Supabase
     response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
-    
     if response.data and len(response.data) > 0:
         customer = response.data[0]
     else:
-        # Create new customer if they don't exist
         new_customer = {"phone_number": data.phone_number, "points_balance": 0}
         insert_res = supabase.table("customers").insert(new_customer).execute()
         customer = insert_res.data[0]
+    return {"status": "success", "points_balance": customer.get("points_balance", 0)}
 
-    return {
-        "status": "success",
-        "customer_id": customer.get("id"),
-        "phone": customer.get("phone_number"),
-        "points_balance": customer.get("points_balance", 0)
-    }
+@app.get("/api/menu/{slug}")
+def get_menu(slug: str):
+    if not supabase:
+        return []
+    res = supabase.table("menu_items").select("*").eq("restaurant_slug", slug).execute()
+    return res.data or []
+
+@app.post("/api/admin/menu/add")
+def add_menu_item(item: MenuItemCreate):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured.")
+    res = supabase.table("menu_items").insert({
+        "restaurant_slug": item.restaurant_slug,
+        "category": item.category,
+        "name": item.name,
+        "price": item.price,
+        "image_url": item.image_url
+    }).execute()
+    return {"status": "success", "message": "Menu item added successfully!"}
 
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured.")
-    
     response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Customer not found.")
-    
     customer = response.data[0]
     new_balance = customer.get("points_balance", 0) + 50
-    
     supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
+    return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
 
-    return {
-        "status": "success",
-        "added_points": 50,
-        "new_balance": new_balance,
-        "message": "Review verified! 50 points added to your account."
-    }
-
-# --- EMBEDDED MOBILE FRONTEND UI ---
+# --- UNIFIED MOBILE & ADMIN UI ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -80,7 +86,7 @@ def serve_mobile_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartTable.ma - Loyalty & Rewards</title>
+    <title>SmartTable.ma - Interactive Dining</title>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -93,43 +99,81 @@ def serve_mobile_frontend():
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { background-color: var(--bg-color); color: var(--text-main); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 1rem; }
-        .mobile-container { width: 100%; max-width: 400px; background: var(--card-bg); border-radius: 24px; padding: 2rem; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.5); border: 1px solid #334155; }
-        .logo { text-align: center; font-size: 1.5rem; font-weight: 800; color: var(--accent); margin-bottom: 0.5rem; letter-spacing: -0.5px; }
-        .subtitle { text-align: center; color: var(--text-muted); font-size: 0.875rem; margin-bottom: 2rem; }
-        .card { background: #0f172a; border-radius: 16px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #1e293b; }
-        input { width: 100%; padding: 0.875rem 1rem; border-radius: 12px; border: 1px solid #475569; background: #1e293b; color: white; font-size: 1rem; margin-bottom: 1rem; outline: none; transition: border-color 0.2s; }
+        .mobile-container { width: 100%; max-width: 400px; background: var(--card-bg); border-radius: 24px; padding: 1.5rem; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.5); border: 1px solid #334155; }
+        
+        .brand-header { text-align: center; margin-bottom: 1rem; }
+        .logo { font-size: 1.5rem; font-weight: 900; color: var(--accent); letter-spacing: -0.5px; }
+        .brand-tag { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+
+        .nav-tabs { display: flex; background: #0f172a; border-radius: 12px; padding: 4px; margin-bottom: 1rem; border: 1px solid #1e293b; }
+        .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 8px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: 0.2s; }
+        .tab-btn.active { background: var(--accent); color: #0f172a; }
+
+        .card { background: #0f172a; border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid #1e293b; }
+        input, select { width: 100%; padding: 0.75rem; border-radius: 10px; border: 1px solid #475569; background: #1e293b; color: white; font-size: 0.9rem; margin-bottom: 0.75rem; outline: none; }
         input:focus { border-color: var(--accent); }
-        button { width: 100%; padding: 0.875rem; border-radius: 12px; border: none; background: var(--accent); color: #0f172a; font-weight: 700; font-size: 1rem; cursor: pointer; transition: background 0.2s, transform 0.1s; }
-        button:hover { background: var(--accent-hover); }
-        button:active { transform: scale(0.98); }
+        button.action-submit { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: var(--accent); color: #0f172a; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+        
         .hidden { display: none !important; }
-        .points-display { text-align: center; margin: 1rem 0; }
-        .points-number { font-size: 3rem; font-weight: 900; color: var(--success); }
-        .points-label { color: var(--text-muted); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 1px; }
-        .action-btn { background: #334155; color: white; margin-top: 0.75rem; }
-        .action-btn:hover { background: #475569; }
-        .message-box { margin-top: 1rem; padding: 0.75rem; border-radius: 8px; font-size: 0.875rem; text-align: center; }
+        .points-number { font-size: 2.5rem; font-weight: 900; color: var(--success); text-align: center; margin: 0.5rem 0; }
+        .action-btn { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: #334155; color: white; font-weight: 600; cursor: pointer; margin-top: 0.5rem; }
+        
+        /* Menu item card layout with photos */
+        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 350px; overflow-y: auto; padding-right: 4px; }
+        .menu-card { display: flex; align-items: center; background: #1e293b; border-radius: 12px; padding: 0.75rem; border: 1px solid #334155; gap: 0.75rem; }
+        .menu-img { width: 50px; height: 50px; border-radius: 8px; object-fit: cover; background: #334155; }
+        .menu-info { flex: 1; }
+        .menu-name { font-size: 0.9rem; font-weight: 600; color: var(--text-main); }
+        .menu-cat { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+        .menu-price { font-size: 0.85rem; font-weight: 700; color: var(--success); }
+
+        .message-box { margin-top: 0.5rem; padding: 0.5rem; border-radius: 6px; font-size: 0.75rem; text-align: center; }
         .success-msg { background: rgba(34, 197, 94, 0.1); color: var(--success); border: 1px solid rgba(34, 197, 94, 0.2); }
     </style>
 </head>
 <body>
     <div class="mobile-container">
-        <div class="logo">SmartTable.ma</div>
-        <div class="subtitle">Tap. Earn. Enjoy Exclusive Rewards.</div>
-
-        <div id="login-section" class="card">
-            <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">Enter to View Points</h3>
-            <input type="tel" id="phone-input" placeholder="Phone Number (e.g., 06XXXXXXXX)" />
-            <button onclick="loginCustomer()">Access My Account</button>
+        <div class="brand-header">
+            <div class="logo">SmartTable.ma</div>
+            <div class="brand-tag">Table Experience</div>
         </div>
 
-        <div id="dashboard-section" class="card hidden">
-            <div class="points-display">
-                <div class="points-label">Your Balance</div>
-                <div class="points-number" id="points-val">0</div>
-                <div style="font-size: 0.8rem; color: var(--text-muted);">Points Available</div>
+        <div class="nav-tabs">
+            <button class="tab-btn active" onclick="switchTab('rewards')">🏆 Rewards</button>
+            <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
+            <button class="tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
+        </div>
+
+        <!-- TAB 1: REWARDS -->
+        <div id="tab-rewards">
+            <div id="login-section" class="card">
+                <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem;">Check Your Points</h3>
+                <input type="tel" id="phone-input" placeholder="Phone (e.g., 06XXXXXXXX)" />
+                <button class="action-submit" onclick="loginCustomer()">Access Account</button>
             </div>
-            <button class="action-btn" onclick="claimReview()">⭐ Leave Google Review (+50 pts)</button>
+            <div id="dashboard-section" class="card hidden">
+                <div style="font-size: 0.75rem; color: var(--text-muted); text-align:center;">Your Balance</div>
+                <div class="points-number" id="points-val">0</div>
+                <button class="action-btn" onclick="claimReview()">⭐ Leave Google Review (+50 pts)</button>
+            </div>
+        </div>
+
+        <!-- TAB 2: MENU -->
+        <div id="tab-menu" class="card hidden">
+            <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--accent);">Live Restaurant Menu</h3>
+            <div id="menu-container" class="menu-grid">
+                <div style="text-align:center; color:var(--text-muted); font-size:0.85rem;">Loading menu...</div>
+            </div>
+        </div>
+
+        <!-- TAB 3: OWNER ADMIN DASHBOARD -->
+        <div id="tab-admin" class="card hidden">
+            <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--accent);">Owner Menu Manager</h3>
+            <input type="text" id="admin-cat" placeholder="Category (e.g., Burgers, Drinks)" />
+            <input type="text" id="admin-name" placeholder="Item Name (e.g., Double Cheese)" />
+            <input type="text" id="admin-price" placeholder="Price (e.g., 70 MAD)" />
+            <input type="text" id="admin-img" placeholder="Photo Image URL (optional)" />
+            <button class="action-submit" onclick="addMenuItem()">+ Add Item to Live Menu</button>
         </div>
 
         <div id="feedback-msg" class="message-box hidden"></div>
@@ -137,42 +181,101 @@ def serve_mobile_frontend():
 
     <script>
         let currentPhone = '';
+        const currentSlug = 'default-restaurant';
 
-        async function loginCustomer() {
-            const phone = document.getElementById('phone-input'].value;
-            if(!phone) { alert('Please enter your phone number.'); return; }
-            currentPhone = phone;
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-rewards').classList.add('hidden');
+            document.getElementById('tab-menu').classList.add('hidden');
+            document.getElementById('tab-admin').classList.add('hidden');
 
-            try {
-                const res = await fetch('/api/customer/auth', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone })
-                });
-                const data = await res.json();
-                
-                document.getElementById('points-val').innerText = data.points_balance;
-                document.getElementById('login-section').classList.add('hidden');
-                document.getElementById('dashboard-section').classList.remove('hidden');
-                showMsg('Welcome!', 'success-msg');
-            } catch(e) {
-                alert('Connection error. Please try again.');
+            if(tabName === 'rewards') {
+                document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                document.getElementById('tab-rewards').classList.remove('hidden');
+            } else if(tabName === 'menu') {
+                document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                document.getElementById('tab-menu').classList.remove('hidden');
+                loadMenu();
+            } else {
+                document.querySelectorAll('.tab-btn')[2].classList.add('active');
+                document.getElementById('tab-admin').classList.remove('hidden');
             }
         }
 
-        async function claimReview() {
+        async function loadMenu() {
             try {
-                const res = await fetch('/api/rewards/claim-review', {
+                const res = await fetch(`/api/menu/${currentSlug}`);
+                const items = await res.json();
+                const container = document.getElementById('menu-container');
+                if(items.length === 0) {
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted);">No items found.</div>';
+                    return;
+                }
+                container.innerHTML = items.map(item => `
+                    <div class="menu-card">
+                        <img src="${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}" class="menu-img" />
+                        <div class="menu-info">
+                            <div class="menu-cat">${item.category}</div>
+                            <div class="menu-name">${item.name}</div>
+                            <div class="menu-price">${item.price}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        async function addMenuItem() {
+            const category = document.getElementById('admin-cat').value;
+            const name = document.getElementById('admin-name').value;
+            const price = document.getElementById('admin-price').value;
+            const image_url = document.getElementById('admin-img').value;
+
+            if(!category || !name || !price) { alert('Please fill in category, name, and price.'); return; }
+
+            try {
+                const res = await fetch('/api/admin/menu/add', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: currentPhone })
+                    body: JSON.stringify({ restaurant_slug: currentSlug, category, name, price, image_url })
                 });
                 const data = await res.json();
-                document.getElementById('points-val').innerText = data.new_balance;
                 showMsg(data.message, 'success-msg');
+                document.getElementById('admin-cat').value = '';
+                document.getElementById('admin-name').value = '';
+                document.getElementById('admin-price').value = '';
+                document.getElementById('admin-img').value = '';
             } catch(e) {
-                alert('Error claiming reward.');
+                alert('Error adding menu item.');
             }
+        }
+
+        async function loginCustomer() {
+            const phone = document.getElementById('phone-input').value;
+            if(!phone) { alert('Please enter phone number.'); return; }
+            currentPhone = phone;
+            const res = await fetch('/api/customer/auth', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ phone_number: phone, restaurant_slug: currentSlug })
+            });
+            const data = await res.json();
+            document.getElementById('points-val').innerText = data.points_balance;
+            document.getElementById('login-section').classList.add('hidden');
+            document.getElementById('dashboard-section').classList.remove('hidden');
+            showMsg('Welcome!', 'success-msg');
+        }
+
+        async function claimReview() {
+            const res = await fetch('/api/rewards/claim-review', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ phone_number: currentPhone })
+            });
+            const data = await res.json();
+            document.getElementById('points-val').innerText = data.new_balance;
+            showMsg(data.message, 'success-msg');
         }
 
         function showMsg(text, className) {
