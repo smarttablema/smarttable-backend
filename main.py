@@ -12,7 +12,7 @@ try:
 except Exception as e:
     supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.3.4")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.3.5")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -45,7 +45,6 @@ def authenticate_customer(data: CustomerAuth):
             customer = ins_res.data[0]
         return {"status": "success", "points_balance": customer.get("points_balance", 0)}
     except Exception as e:
-        print(f"AUTH ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
@@ -56,7 +55,6 @@ def get_menu(slug: str):
         res = supabase.table("menu_items").select("*").eq("restaurant_slug", slug).execute()
         return res.data or []
     except Exception as e:
-        print(f"MENU ERROR: {str(e)}")
         return []
 
 @app.post("/api/admin/menu/add")
@@ -183,7 +181,8 @@ def serve_mobile_frontend():
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
-                document.getElementById('admin-tab-btn').classList.remove('hidden');
+                const adminBtn = document.getElementById('admin-tab-btn');
+                if(adminBtn) adminBtn.classList.remove('hidden');
                 switchTab('admin');
             }
         };
@@ -204,7 +203,8 @@ def serve_mobile_frontend():
                 document.getElementById('tab-menu').classList.remove('hidden');
                 loadMenu();
             } else {
-                document.getElementById('admin-tab-btn'].classList.add('active');
+                const adminBtn = document.getElementById('admin-tab-btn');
+                if(adminBtn) adminBtn.classList.add('active');
                 document.getElementById('tab-admin').classList.remove('hidden');
             }
         }
