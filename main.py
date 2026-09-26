@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.2.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.3.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -56,7 +56,6 @@ def health_check():
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
     phone = data.phone_number.strip()
-    # Global validation: accepts international formats (+ optional) and 8 to 15 digits total length
     clean_phone = re.sub(r'[\s\-\(\)]', '', phone)
     if not re.match(r'^\+?\d{8,15}$', clean_phone):
         raise HTTPException(status_code=400, detail="Invalid phone number format. Please enter a valid mobile number (8 to 15 digits).")
@@ -116,7 +115,7 @@ def add_menu_item(item: MenuItemCreate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Item successfully added!"}
+        return {"status": "success", "message": "Menu item added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -145,7 +144,7 @@ def delete_menu_item(item_id: int):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Item removed!"}
+        return {"status": "success", "message": "Menu item removed!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -180,7 +179,7 @@ def add_reward(reward: RewardCreate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Reward tier added!"}
+        return {"status": "success", "message": "Reward created successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -232,7 +231,7 @@ def add_tier(tier: TierCreate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Tier successfully created!"}
+        return {"status": "success", "message": "Loyalty tier created!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -245,7 +244,7 @@ def delete_tier(tier_id: int):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Tier removed!"}
+        return {"status": "success", "message": "Loyalty tier removed!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -329,7 +328,7 @@ def claim_google_review(data: ReviewReward):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
+        return {"status": "success", "new_balance": new_balance, "message": "50 points added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -338,7 +337,7 @@ def refer_friend(data: ReferralCreate):
     friend = data.friend_phone.strip()
     clean_friend = re.sub(r'[\s\-\(\)]', '', friend)
     if not re.match(r'^\+?\d{8,15}$', clean_friend):
-        raise HTTPException(status_code=400, detail="Invalid friend phone number format.")
+        raise HTTPException(status_code=400, detail="Invalid friend phone format.")
     try:
         if data.referrer_phone == clean_friend:
             raise HTTPException(status_code=400, detail="You cannot refer your own number.")
@@ -354,7 +353,7 @@ def refer_friend(data: ReferralCreate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Friend registered! 50 points unlock on their first visit."}
+        return {"status": "success", "message": "Friend registered successfully!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -450,9 +449,10 @@ def serve_mobile_frontend():
         .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; }
         .edit-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-right: 6px; }
 
-        /* Professional Toast Notification */
-        #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(100px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 24px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; box-shadow: 0 10px 25px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; }
+        /* Professional Toast Notification System */
+        #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(120px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 24px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; box-shadow: 0 15px 30px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.2); }
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
+        #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
         .admin-subnav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
         .admin-sub-btn { padding: 0.5rem 0.2rem; text-align: center; border-radius: 8px; font-size: 0.68rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
@@ -478,7 +478,7 @@ def serve_mobile_frontend():
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Loyalty Portal</h3>
-                <label>Phone Number (Local or International)</label>
+                <label>Phone Number (Local / International)</label>
                 <input type="tel" id="phone-input" placeholder="e.g., 0612345678 or +33..." />
                 <button class="btn-main" onclick="loginCustomer()">Access My Account</button>
             </div>
@@ -654,9 +654,14 @@ def serve_mobile_frontend():
             }
         };
 
-        function showToast(text) {
+        function showToast(text, isError = false) {
             const t = document.getElementById('toast-banner');
             t.innerText = text;
+            if(isError) {
+                t.classList.add('error');
+            } else {
+                t.classList.remove('error');
+            }
             t.classList.add('show');
             setTimeout(() => t.classList.remove('show'), 3500);
         }
@@ -709,20 +714,20 @@ def serve_mobile_frontend():
 
         function copyCustomerNumbers() {
             if(!cachedCustomers || cachedCustomers.length === 0) {
-                showToast('❌ No client numbers to copy.');
+                showToast('No client numbers to copy.', true);
                 return;
             }
             const numbers = cachedCustomers.map(c => c.phone_number).join(', ');
             navigator.clipboard.writeText(numbers);
-            showToast('📋 Copied ' + cachedCustomers.length + ' phone numbers!');
+            showToast('Copied ' + cachedCustomers.length + ' client phone numbers!');
         }
 
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
-            if(!msg) { showToast('❌ Please enter a message.'); return; }
+            if(!msg) { showToast('Please enter a broadcast message.', true); return; }
             const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
-            showToast('🚀 Opening WhatsApp Broadcast...');
+            showToast('Opening WhatsApp Broadcast...');
         }
 
         async function loadMenu() {
@@ -810,12 +815,12 @@ def serve_mobile_frontend():
                     document.getElementById('modal-voucher-img').src = data.image_url;
                     document.getElementById('voucher-modal').style.display = 'flex';
                     loadCustomerData();
-                    showToast('🎉 Reward unlocked successfully!');
+                    showToast('Reward unlocked successfully!');
                 } else {
-                    showToast('❌ ' + (data.detail || 'Redemption failed.'));
+                    showToast(data.detail || 'Redemption failed.', true);
                 }
             } catch(e) {
-                showToast('❌ Connection error.');
+                showToast('Connection error.', true);
             }
         }
 
@@ -826,7 +831,7 @@ def serve_mobile_frontend():
         async function validateVoucher() {
             const code = document.getElementById('voucher-input').value;
             const resBox = document.getElementById('voucher-result');
-            if(!code) { showToast('❌ Enter voucher code.'); return; }
+            if(!code) { showToast('Please enter a voucher code.', true); return; }
             try {
                 const res = await fetch('/api/admin/validate-voucher', {
                     method: 'POST',
@@ -840,20 +845,20 @@ def serve_mobile_frontend():
                     document.getElementById('v-phone').innerText = "Client Phone: " + data.phone_number;
                     resBox.classList.remove('hidden');
                     document.getElementById('voucher-input').value = '';
-                    showToast('✓ Voucher successfully validated!');
+                    showToast('Voucher successfully validated!');
                 } else {
                     resBox.classList.add('hidden');
-                    showToast('❌ ' + (data.detail || 'Invalid code'));
+                    showToast(data.detail || 'Invalid voucher code', true);
                 }
             } catch(e) {
-                showToast('❌ Error validating code');
+                showToast('Error validating code', true);
             }
         }
 
         async function addTier() {
             const name = document.getElementById('tier-name-input').value;
             const min_points = document.getElementById('tier-points-input').value;
-            if(!name || !min_points) { showToast('❌ Fill in tier name and points.'); return; }
+            if(!name || !min_points) { showToast('Please fill in tier name and points.', true); return; }
             try {
                 const res = await fetch('/api/admin/tiers/add', {
                     method: 'POST',
@@ -861,12 +866,12 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, name, min_points: parseInt(min_points) })
                 });
                 const data = await res.json();
-                showToast('✓ ' + data.message);
+                showToast(data.message);
                 document.getElementById('tier-name-input').value = '';
                 document.getElementById('tier-points-input').value = '';
                 loadAdminTiers();
             } catch(e) {
-                showToast('❌ Error adding tier.');
+                showToast('Error adding tier.', true);
             }
         }
 
@@ -893,9 +898,9 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/tiers/' + id, { method: 'DELETE' });
                 loadAdminTiers();
-                showToast('✓ Tier deleted.');
+                showToast('Tier removed successfully.');
             } catch(e) {
-                showToast('❌ Error deleting tier.');
+                showToast('Error deleting tier.', true);
             }
         }
 
@@ -903,7 +908,7 @@ def serve_mobile_frontend():
             const title = document.getElementById('reward-title-input').value;
             const points_required = document.getElementById('reward-cost-input').value;
             const image_url = document.getElementById('reward-img-input').value;
-            if(!title || !points_required) { showToast('❌ Fill in title and points.'); return; }
+            if(!title || !points_required) { showToast('Please fill in title and points.', true); return; }
             try {
                 const res = await fetch('/api/admin/rewards/add', {
                     method: 'POST',
@@ -911,13 +916,13 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, title, points_required: parseInt(points_required), image_url })
                 });
                 const data = await res.json();
-                showToast('✓ ' + data.message);
+                showToast(data.message);
                 document.getElementById('reward-title-input').value = '';
                 document.getElementById('reward-cost-input').value = '';
                 document.getElementById('reward-img-input').value = '';
                 loadAdminRewards();
             } catch(e) {
-                showToast('❌ Error adding reward.');
+                showToast('Error adding reward.', true);
             }
         }
 
@@ -944,9 +949,9 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/rewards/' + id, { method: 'DELETE' });
                 loadAdminRewards();
-                showToast('✓ Reward deleted.');
+                showToast('Reward removed successfully.');
             } catch(e) {
-                showToast('❌ Error deleting reward.');
+                showToast('Error deleting reward.', true);
             }
         }
 
@@ -967,7 +972,7 @@ def serve_mobile_frontend():
                 const items = await res.json();
                 const container = document.getElementById('admin-menu-list');
                 if(!items || items.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No items.</div>';
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No items.</div>';
                     return;
                 }
                 container.innerHTML = items.map(item => `
@@ -987,7 +992,7 @@ def serve_mobile_frontend():
             const name = document.getElementById('admin-name').value;
             const price = document.getElementById('admin-price').value;
             const image_url = document.getElementById('admin-img').value;
-            if(!category || !name || !price) { showToast('❌ Fill category, name, price.'); return; }
+            if(!category || !name || !price) { showToast('Please fill category, name, and price.', true); return; }
             try {
                 const res = await fetch('/api/admin/menu/add', {
                     method: 'POST',
@@ -995,14 +1000,14 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ restaurant_slug: currentSlug, category, name, price, image_url })
                 });
                 const data = await res.json();
-                showToast('✓ ' + data.message);
+                showToast(data.message);
                 document.getElementById('admin-cat').value = '';
                 document.getElementById('admin-name').value = '';
                 document.getElementById('admin-price').value = '';
                 document.getElementById('admin-img').value = '';
                 loadAdminMenu();
             } catch(e) {
-                showToast('❌ Error adding item.');
+                showToast('Error adding item.', true);
             }
         }
 
@@ -1016,10 +1021,10 @@ def serve_mobile_frontend():
                     body: JSON.stringify({ price: newPrice })
                 });
                 const data = await res.json();
-                showToast('✓ ' + data.message);
+                showToast(data.message);
                 loadAdminMenu();
             } catch(e) {
-                showToast('❌ Error updating price.');
+                showToast('Error updating price.', true);
             }
         }
 
@@ -1028,9 +1033,9 @@ def serve_mobile_frontend():
             try {
                 await fetch('/api/admin/menu/' + id, { method: 'DELETE' });
                 loadAdminMenu();
-                showToast('✓ Item removed.');
+                showToast('Menu item removed.');
             } catch(e) {
-                showToast('❌ Error deleting item.');
+                showToast('Error deleting item.', true);
             }
         }
 
@@ -1039,7 +1044,7 @@ def serve_mobile_frontend():
             const clean = phone.replace(/[\\s\\-\\(\\)]/g, '');
             const globalRegex = /^\\+?\\d{8,15}$/;
             if(!globalRegex.test(clean)) {
-                showToast('❌ Please enter a valid mobile number (8 to 15 digits)');
+                showToast('Please enter a valid mobile number (8 to 15 digits)', true);
                 return;
             }
             currentPhone = clean;
@@ -1055,12 +1060,12 @@ def serve_mobile_frontend():
                     document.getElementById('login-section').classList.add('hidden');
                     document.getElementById('dashboard-section').classList.remove('hidden');
                     loadCustomerData();
-                    showToast('👋 Welcome back!');
+                    showToast('Welcome back!');
                 } else {
-                    showToast('❌ ' + (data.detail || 'Login failed'));
+                    showToast(data.detail || 'Login failed', true);
                 }
             } catch(e) {
-                showToast('❌ Connection error');
+                showToast('Connection error', true);
             }
         }
 
@@ -1074,9 +1079,9 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 document.getElementById('points-val').innerText = data.new_balance;
                 loadCustomerData();
-                showToast('⭐ ' + data.message);
+                showToast(data.message);
             } catch(e) {
-                showToast('❌ Error claiming points');
+                showToast('Error claiming points', true);
             }
         }
 
@@ -1085,7 +1090,7 @@ def serve_mobile_frontend():
             const cleanFriend = friendPhone.replace(/[\\s\\-\\(\\)]/g, '');
             const globalRegex = /^\\+?\\d{8,15}$/;
             if(!globalRegex.test(cleanFriend)) {
-                showToast('❌ Invalid friend phone format (8 to 15 digits)');
+                showToast('Please enter a valid friend mobile number', true);
                 return;
             }
             try {
@@ -1096,13 +1101,13 @@ def serve_mobile_frontend():
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    showToast('✓ ' + data.message);
+                    showToast(data.message);
                     document.getElementById('friend-phone').value = '';
                 } else {
-                    showToast('❌ ' + (data.detail || 'Error referring friend'));
+                    showToast(data.detail || 'Error referring friend', true);
                 }
             } catch(e) {
-                showToast('❌ Connection error');
+                showToast('Connection error', true);
             }
         }
     </script>
