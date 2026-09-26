@@ -1,22 +1,18 @@
 import os
-import json
-import urllib.request
-import urllib.error
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from supabase import create_client, Client
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
 SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
 
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-}
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.5")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.2.6")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -38,74 +34,56 @@ def health_check():
 
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
     try:
-        url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
-        req = urllib.request.Request(url, headers=HEADERS, method="GET")
-        with urllib.request.urlopen(req) as response:
-            customers = json.loads(response.read().decode())
-        
-        if customers and len(customers) > 0:
-            customer = customers[0]
+        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+        if response.data and len(response.data) > 0:
+            customer = response.data[0]
         else:
-            ins_url = f"{SUPABASE_URL}/rest/v1/customers"
-            payload = json.dumps({"phone_number": data.phone_number, "points_balance": 0}).encode('utf-8')
-            ins_req = urllib.request.Request(ins_url, data=payload, headers=HEADERS, method="POST")
-            with urllib.request.urlopen(ins_req) as ins_response:
-                created = json.loads(ins_response.read().decode())
-            customer = created[0] if isinstance(created, list) and created else {"points_balance": 0}
-            
+            ins_res = supabase.table("customers").insert({"phone_number": data.phone_number, "points_balance": 0}).execute()
+            customer = ins_res.data[0]
         return {"status": "success", "points_balance": customer.get("points_balance", 0)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
 def get_menu(slug: str):
+    if not supabase:
+        return []
     try:
-        url = f"{SUPABASE_URL}/rest/v1/menu_items?restaurant_slug=eq.{slug}"
-        req = urllib.request.Request(url, headers=HEADERS, method="GET")
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode()) or []
-    except Exception:
+        res = supabase.table("menu_items").select("*").eq("restaurant_slug", slug).execute()
+        return res.data or []
+    except Exception as e:
         return []
 
 @app.post("/api/admin/menu/add")
 def add_menu_item(item: MenuItemCreate):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
     try:
-        url = f"{SUPABASE_URL}/rest/v1/menu_items"
-        payload = json.dumps({
+        res = supabase.table("menu_items").insert({
             "restaurant_slug": item.restaurant_slug,
             "category": item.category,
             "name": item.name,
             "price": item.price,
             "image_url": item.image_url
-        }).encode('utf-8')
-        req = urllib.request.Request(url, data=payload, headers=HEADERS, method="POST")
-        with urllib.request.urlopen(req) as response:
-            pass
-        return {"status": "success", "message": "Item added to live menu!"}
+        }).execute()
+        return {"status": "success", "message": "Item added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not initialized.")
     try:
-        url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
-        req = urllib.request.Request(url, headers=HEADERS, method="GET")
-        with urllib.request.urlopen(req) as response:
-            customers = json.loads(response.read().decode())
-        
-        if not customers:
+        response = supabase.table("customers").select("*").eq("phone_number", data.phone_number).execute()
+        if not response.data:
             raise HTTPException(status_code=404, detail="Customer not found.")
-        
-        customer = customers[0]
+        customer = response.data[0]
         new_balance = customer.get("points_balance", 0) + 50
-        
-        patch_url = f"{SUPABASE_URL}/rest/v1/customers?phone_number=eq.{data.phone_number}"
-        patch_payload = json.dumps({"points_balance": new_balance}).encode('utf-8')
-        patch_req = urllib.request.Request(patch_url, data=patch_payload, headers=HEADERS, method="PATCH")
-        with urllib.request.urlopen(patch_req) as patch_response:
-            pass
-            
+        supabase.table("customers").update({"points_balance": new_balance}).eq("phone_number", data.phone_number).execute()
         return {"status": "success", "new_balance": new_balance, "message": "50 points added for your review!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
