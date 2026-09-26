@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.3.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.4.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -20,10 +20,12 @@ class CustomerAuth(BaseModel):
 
 class ReviewReward(BaseModel):
     phone_number: str
+    restaurant_slug: str = "default-restaurant"
 
 class ReferralCreate(BaseModel):
     referrer_phone: str
     friend_phone: str
+    restaurant_slug: str = "default-restaurant"
 
 class MenuItemCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
@@ -45,6 +47,11 @@ class TierCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
     name: str
     min_points: int
+
+class SettingsUpdate(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    review_points: int
+    referral_points: int
 
 class VoucherValidate(BaseModel):
     code: str
@@ -86,6 +93,41 @@ def get_customers():
         return customers or []
     except Exception:
         return []
+
+@app.get("/api/settings/{slug}")
+def get_restaurant_settings(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
+        settings = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not settings:
+            return {"review_points": 50, "referral_points": 50}
+        return {"review_points": settings["review_points"], "referral_points": settings["referral_points"]}
+    except Exception:
+        return {"review_points": 50, "referral_points": 50}
+
+@app.post("/api/admin/settings/update")
+def update_restaurant_settings(data: SettingsUpdate):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
+        exists = cur.fetchone()
+        if exists:
+            cur.execute("UPDATE restaurant_settings SET review_points = %s, referral_points = %s WHERE restaurant_slug = %s;", 
+                        (data.review_points, data.referral_points, data.restaurant_slug))
+        else:
+            cur.execute("INSERT INTO restaurant_settings (restaurant_slug, review_points, referral_points) VALUES (%s, %s, %s);", 
+                        (data.restaurant_slug, data.review_points, data.referral_points))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Campaign points settings updated successfully!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/menu/{slug}")
 def get_menu(slug: str):
@@ -316,19 +358,25 @@ def validate_voucher(data: VoucherValidate):
 
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
+    slug = data.restaurant_slug or "default-restaurant"
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # Fetch dynamic review points set by owner
+        cur.execute("SELECT review_points FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
+        s = cur.fetchone()
+        review_pts = s["review_points"] if s else 50
+
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
         customer = cur.fetchone()
         if not customer:
             raise HTTPException(status_code=404, detail="Customer not found.")
-        new_balance = customer["points_balance"] + 50
+        new_balance = customer["points_balance"] + review_pts
         cur.execute("UPDATE customers SET points_balance = %s WHERE phone_number = %s;", (new_balance, data.phone_number))
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "new_balance": new_balance, "message": "50 points added successfully!"}
+        return {"status": "success", "new_balance": new_balance, "message": f"{review_pts} points added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -454,8 +502,8 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        .admin-subnav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
-        .admin-sub-btn { padding: 0.5rem 0.2rem; text-align: center; border-radius: 8px; font-size: 0.68rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
+        .admin-subnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); }
+        .admin-sub-btn { padding: 0.5rem 0.1rem; text-align: center; border-radius: 8px; font-size: 0.6rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); }
     </style>
 </head>
@@ -499,12 +547,12 @@ def serve_mobile_frontend():
                 </div>
 
                 <div style="border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 0.75rem;">
-                    <label>👥 Refer a Friend (+50 pts on 1st visit)</label>
+                    <label id="referral-label-text">👥 Refer a Friend (+50 pts on 1st visit)</label>
                     <input type="tel" id="friend-phone" placeholder="Friend's Phone Number" />
                     <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; padding: 0.6rem; font-size: 0.85rem;">Register Friend</button>
                 </div>
 
-                <a href="https://maps.google.com" target="_blank" class="review-link" onclick="claimReview()">
+                <a href="https://maps.google.com" target="_blank" class="review-link" id="review-link-btn" onclick="claimReview()">
                     ⭐ Leave Google Review (+50 Points)
                 </a>
             </div>
@@ -527,6 +575,7 @@ def serve_mobile_frontend():
         <div id="tab-admin" class="hidden">
             <div class="admin-subnav">
                 <button class="admin-sub-btn active" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">📢 Broadcast</button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">⚙️ Settings</button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">📖 Menu</button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">🎁 Rewards</button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">👑 Tiers</button>
@@ -558,7 +607,19 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 2. MENU EDITOR -->
+            <!-- 2. CAMPAIGN POINT RULES SETTINGS -->
+            <div id="admin-sub-settings" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign Reward Points</h3>
+                    <label>Google Review Points</label>
+                    <input type="number" id="setting-review-pts" placeholder="e.g. 50" />
+                    <label>Friend Referral Points</label>
+                    <input type="number" id="setting-referral-pts" placeholder="e.g. 50" />
+                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem;">Save Point Rules</button>
+                </div>
+            </div>
+
+            <!-- 3. MENU EDITOR -->
             <div id="admin-sub-menu" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
@@ -577,7 +638,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 3. REWARDS EDITOR -->
+            <!-- 4. REWARDS EDITOR -->
             <div id="admin-sub-rewards" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
@@ -594,7 +655,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 4. TIERS EDITOR -->
+            <!-- 5. TIERS EDITOR -->
             <div id="admin-sub-tiers" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">👑 Loyalty Tiers Builder</h3>
@@ -637,8 +698,11 @@ def serve_mobile_frontend():
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
         let cachedCustomers = [];
+        let currentReviewPts = 50;
+        let currentReferralPts = 50;
         
         window.onload = function() {
+            loadRestaurantSettings();
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
                 document.getElementById('client-nav').classList.add('hidden');
@@ -653,6 +717,49 @@ def serve_mobile_frontend():
                 loadMenu();
             }
         };
+
+        async function loadRestaurantSettings() {
+            try {
+                const res = await fetch('/api/settings/' + currentSlug);
+                const data = await res.json();
+                if(res.ok) {
+                    currentReviewPts = data.review_points;
+                    currentReferralPts = data.referral_points;
+                    document.getElementById('review-link-btn').innerText = `⭐ Leave Google Review (+${currentReviewPts} Points)`;
+                    document.getElementById('referral-label-text').innerText = `👥 Refer a Friend (+${currentReferralPts} pts on 1st visit)`;
+                    
+                    const revInput = document.getElementById('setting-review-pts');
+                    const refInput = document.getElementById('setting-referral-pts');
+                    if(revInput) revInput.value = currentReviewPts;
+                    if(refInput) refInput.value = currentReferralPts;
+                }
+            } catch(e) {}
+        }
+
+        async function saveCampaignSettings() {
+            const review_points = parseInt(document.getElementById('setting-review-pts').value);
+            const referral_points = parseInt(document.getElementById('setting-referral-pts').value);
+            if(isNaN(review_points) || isNaN(referral_points)) {
+                showToast('Please enter valid numbers for point values.', true);
+                return;
+            }
+            try {
+                const res = await fetch('/api/admin/settings/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ restaurant_slug: currentSlug, review_points, referral_points })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast(data.message);
+                    loadRestaurantSettings();
+                } else {
+                    showToast('Failed to save settings', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
 
         function showToast(text, isError = false) {
             const t = document.getElementById('toast-banner');
@@ -683,12 +790,16 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['campaigns', 'menu', 'rewards', 'tiers'].forEach(s => {
-                document.getElementById('sub-btn-' + s).classList.remove('active');
-                document.getElementById('admin-sub-' + s).classList.add('hidden');
+            ['campaigns', 'settings', 'menu', 'rewards', 'tiers'].forEach(s => {
+                const btn = document.getElementById('sub-btn-' + s);
+                const sec = document.getElementById('admin-sub-' + s);
+                if(btn) btn.classList.remove('active');
+                if(sec) sec.classList.add('hidden');
             });
-            document.getElementById('sub-btn-' + subName).classList.add('active');
-            document.getElementById('admin-sub-' + subName).classList.remove('hidden');
+            const targetBtn = document.getElementById('sub-btn-' + subName);
+            const targetSec = document.getElementById('admin-sub-' + subName);
+            if(targetBtn) targetBtn.classList.add('active');
+            if(targetSec) targetSec.classList.remove('hidden');
         }
 
         async function loadAdminCustomers() {
@@ -1074,7 +1185,7 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/rewards/claim-review', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: currentPhone })
+                    body: JSON.stringify({ phone_number: currentPhone, restaurant_slug: currentSlug })
                 });
                 const data = await res.json();
                 document.getElementById('points-val').innerText = data.new_balance;
@@ -1097,7 +1208,7 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/rewards/refer-friend', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: cleanFriend })
+                    body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: cleanFriend, restaurant_slug: currentSlug })
                 });
                 const data = await res.json();
                 if(res.ok) {
