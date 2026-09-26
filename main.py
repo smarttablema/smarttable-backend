@@ -1,4 +1,5 @@
 import os
+import random
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
@@ -10,7 +11,7 @@ DATABASE_URL = "postgresql://neondb_owner:npg_7aYbfrQdjcq6@ep-cold-lake-b1djlrzp
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="5.0.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="6.1.0")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -36,6 +37,15 @@ class MenuItemCreate(BaseModel):
 
 class MenuPriceUpdate(BaseModel):
     price: str
+
+class RewardCreate(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    title: str
+    points_required: int
+    image_url: str = ""
+
+class VoucherValidate(BaseModel):
+    code: str
 
 @app.get("/api/health")
 def health_check():
@@ -86,7 +96,7 @@ def add_menu_item(item: MenuItemCreate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Item successfully added to live menu!"}
+        return {"status": "success", "message": "Item successfully added!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -115,7 +125,144 @@ def delete_menu_item(item_id: int):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Item removed from menu!"}
+        return {"status": "success", "message": "Item removed!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/rewards/{slug}")
+def get_rewards(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM custom_rewards WHERE restaurant_slug = %s ORDER BY points_required ASC;", (slug,))
+        rewards = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not rewards:
+            return [
+                {"id": 1, "title": "Free Espresso / Coffee", "points_required": 50, "image_url": "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=500"},
+                {"id": 2, "title": "Free Gourmet Dessert", "points_required": 100, "image_url": "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500"},
+                {"id": 3, "title": "100 MAD Off Total Bill", "points_required": 250, "image_url": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=500"}
+            ]
+        return rewards
+    except Exception:
+        return [
+            {"id": 1, "title": "Free Espresso / Coffee", "points_required": 50, "image_url": "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=500"},
+            {"id": 2, "title": "Free Gourmet Dessert", "points_required": 100, "image_url": "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500"},
+            {"id": 3, "title": "100 MAD Off Total Bill", "points_required": 250, "image_url": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=500"}
+        ]
+
+@app.post("/api/admin/rewards/add")
+def add_reward(reward: RewardCreate):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS custom_rewards (
+                id SERIAL PRIMARY KEY,
+                restaurant_slug TEXT DEFAULT 'default-restaurant',
+                title TEXT NOT NULL,
+                points_required INTEGER NOT NULL,
+                image_url TEXT DEFAULT ''
+            );
+        """)
+        cur.execute(
+            "INSERT INTO custom_rewards (restaurant_slug, title, points_required, image_url) VALUES (%s, %s, %s, %s);",
+            (reward.restaurant_slug, reward.title, reward.points_required, reward.image_url)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Reward tier added!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/admin/rewards/{reward_id}")
+def delete_reward(reward_id: int):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM custom_rewards WHERE id = %s;", (reward_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Reward removed!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/rewards/redeem")
+def redeem_reward(data: dict):
+    phone = data.get("phone_number")
+    reward_id = data.get("reward_id")
+    slug = data.get("restaurant_slug", "default-restaurant")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (phone,))
+        customer = cur.fetchone()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found.")
+        
+        cur.execute("SELECT * FROM custom_rewards WHERE id = %s;", (reward_id,))
+        reward = cur.fetchone()
+        cost = reward["points_required"] if reward else 50
+        title = reward["title"] if reward else "Free Item"
+        img = reward.get("image_url") if reward else ""
+        if not img:
+            img = "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500"
+
+        if customer["points_balance"] < cost:
+            raise HTTPException(status_code=400, detail="Insufficient points balance.")
+
+        new_balance = customer["points_balance"] - cost
+        cur.execute("UPDATE customers SET points_balance = %s WHERE phone_number = %s;", (new_balance, phone))
+        
+        v_code = str(random.randint(1000, 9999))
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS active_vouchers (
+                id SERIAL PRIMARY KEY,
+                code TEXT UNIQUE,
+                phone_number TEXT,
+                reward_title TEXT,
+                image_url TEXT,
+                status TEXT DEFAULT 'active'
+            );
+        """)
+        cur.execute("INSERT INTO active_vouchers (code, phone_number, reward_title, image_url) VALUES (%s, %s, %s, %s);", (v_code, phone, title, img))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {"status": "success", "new_balance": new_balance, "voucher_code": v_code, "reward_title": title, "image_url": img}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/validate-voucher")
+def validate_voucher(data: VoucherValidate):
+    try:
+        code_input = data.code.strip()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM active_vouchers WHERE code = %s AND status = 'active';", (code_input,))
+        voucher = cur.fetchone()
+        if not voucher:
+            raise HTTPException(status_code=404, detail="Invalid or already used voucher code.")
+        
+        cur.execute("UPDATE active_vouchers SET status = 'redeemed' WHERE code = %s;", (code_input,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {
+            "status": "success",
+            "reward_title": voucher["reward_title"],
+            "image_url": voucher["image_url"] or "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500",
+            "phone_number": voucher["phone_number"]
+        }
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -146,7 +293,7 @@ def refer_friend(data: ReferralCreate):
         cur = conn.cursor()
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.friend_phone,))
         if cur.fetchone():
-            raise HTTPException(status_code=400, detail="This friend already has a loyalty account.")
+            raise HTTPException(status_code=400, detail="This friend already has an account.")
         cur.execute(
             "INSERT INTO customers (phone_number, points_balance, referred_by, has_purchased) VALUES (%s, 0, %s, FALSE);",
             (data.friend_phone, data.referrer_phone)
@@ -160,38 +307,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/rewards/purchase-cashback")
-def purchase_cashback(data: PurchaseLog):
-    try:
-        earned_points = int(data.amount_spent * 0.10) # 10% cashback
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
-        customer = cur.fetchone()
-        if not customer:
-            raise HTTPException(status_code=404, detail="Customer not found.")
-        
-        if not customer["has_purchased"] and customer["referred_by"]:
-            referrer_phone = customer["referred_by"]
-            cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (referrer_phone,))
-            referrer = cur.fetchone()
-            if referrer:
-                new_ref_balance = referrer["points_balance"] + 50
-                cur.execute("UPDATE customers SET points_balance = %s WHERE phone_number = %s;", (new_ref_balance, referrer_phone))
-        
-        new_balance = customer["points_balance"] + earned_points
-        cur.execute(
-            "UPDATE customers SET points_balance = %s, has_purchased = TRUE WHERE phone_number = %s;",
-            (new_balance, data.phone_number)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "earned": earned_points, "new_balance": new_balance}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- WORLD-CLASS PROFESSIONAL SAAS UI ---
+# --- WORLD-CLASS SAAS ENTERPRISE UI ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -200,7 +316,7 @@ def serve_mobile_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartTable.ma | Premium Table Experience</title>
+    <title>SmartTable.ma | Enterprise Table Experience</title>
     <link rel="icon" type="image/png" href="https://img.icons8.com/color/48/qr-code.png">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -208,7 +324,7 @@ def serve_mobile_frontend():
             --bg-deep: #090d16;
             --surface: #131c31;
             --surface-card: #1a2642;
-            --accent: #f59e0b; /* Warm Moroccan Gold */
+            --accent: #f59e0b; /* Moroccan Gold */
             --accent-glow: rgba(245, 158, 11, 0.2);
             --primary: #38bdf8;
             --text-main: #f8fafc;
@@ -229,7 +345,7 @@ def serve_mobile_frontend():
         .brand-tag { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-top: 2px; font-weight: 600; }
         
         .nav-tabs { display: flex; background: var(--bg-deep); border-radius: 14px; padding: 5px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
-        .tab-btn { flex: 1; padding: 0.6rem; text-align: center; border-radius: 10px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .tab-btn { flex: 1; padding: 0.6rem; text-align: center; border-radius: 10px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
         .tab-btn.active { background: var(--surface-card); color: var(--text-main); box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid var(--border); }
         
         .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); }
@@ -238,51 +354,56 @@ def serve_mobile_frontend():
         input { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; }
         input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
         
-        .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s, opacity 0.2s; box-shadow: 0 4px 14px var(--accent-glow); }
+        .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
         .btn-main:active { transform: scale(0.98); }
         
         .hidden { display: none !important; }
         
-        .points-display { text-align: center; padding: 0.5rem 0; }
+        .points-display { text-align: center; padding: 0.2rem 0; }
         .points-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-        .points-number { font-size: 3rem; font-weight: 800; color: var(--success); letter-spacing: -1px; margin: 0.2rem 0; }
-        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-bottom: 1rem; }
+        .points-number { font-size: 2.75rem; font-weight: 800; color: var(--success); letter-spacing: -1px; margin: 0.2rem 0; }
+        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
 
-        .referral-box { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 1rem; }
-        
-        .review-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; margin-top: 1rem; padding: 0.85rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 0.85rem; transition: background 0.2s; }
-        .review-link:hover { background: rgba(245, 158, 11, 0.15); }
+        .rewards-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 180px; overflow-y: auto; margin-top: 0.5rem; padding-right: 2px; }
+        .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid var(--border); gap: 0.5rem; }
+        .reward-thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: var(--surface); }
+        .reward-info { flex: 1; }
+        .reward-title { font-size: 0.82rem; font-weight: 700; color: var(--text-main); }
+        .reward-cost { font-size: 0.7rem; color: var(--accent); font-weight: 700; }
+        .redeem-btn { background: var(--success); color: white; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 700; font-size: 0.72rem; cursor: pointer; }
+
+        .review-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; margin-top: 1rem; padding: 0.8rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 0.82rem; }
 
         .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 360px; overflow-y: auto; padding-right: 2px; }
         .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; transition: all 0.2s; }
-        .menu-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+        .menu-card:hover { border-color: var(--accent); }
         .menu-img { width: 55px; height: 55px; border-radius: 10px; object-fit: cover; background: var(--surface); }
         .menu-info { flex: 1; }
         .menu-name { font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
-        .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+        .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
         /* Modal Overlay */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
-        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
-        @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); }
         .modal-img { width: 100%; height: 230px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
-        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; }
-        .close-modal:hover { background: var(--danger); }
+        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; }
 
         .admin-item-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; margin-bottom: 0.5rem; font-size: 0.85rem; border: 1px solid var(--border); }
-        .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; transition: background 0.2s; }
-        .danger-btn:hover { background: var(--danger); color: white; }
-        .edit-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-right: 6px; transition: background 0.2s; }
-        .edit-btn:hover { background: var(--primary); color: #090d16; }
+        .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; }
+        .edit-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-right: 6px; }
 
         .message-box { margin-top: 0.75rem; padding: 0.75rem; border-radius: 10px; font-size: 0.8rem; text-align: center; font-weight: 600; }
         .success-msg { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
         .error-msg { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        .proximity-banner { background: linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(16, 185, 129, 0.15) 100%); border: 1px solid var(--primary); padding: 0.75rem; border-radius: 12px; font-size: 0.78rem; text-align: center; color: var(--primary); margin-bottom: 1rem; font-weight: 600; display: none; }
     </style>
 </head>
 <body>
     <div class="app-frame">
+        <div id="geo-banner" class="proximity-banner">📍 You are 50m away! Drop in for 10% cashback today!</div>
+        
         <div class="brand-header">
             <div class="logo">SmartTable<span>.ma</span></div>
             <div class="brand-tag">Table Experience & Loyalty</div>
@@ -294,6 +415,7 @@ def serve_mobile_frontend():
             <button class="tab-btn hidden" id="admin-tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
         </div>
 
+        <!-- REWARDS TAB -->
         <div id="tab-rewards">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Loyalty Portal</h3>
@@ -306,55 +428,78 @@ def serve_mobile_frontend():
                 <div class="points-display">
                     <div class="points-label">Your Balance</div>
                     <div class="points-number" id="points-val">0</div>
-                    <div class="cashback-badge">⚡ Earn 10% Cashback on Every Order</div>
+                    <div class="cashback-badge">⚡ 10% Cashback Active</div>
                 </div>
                 
-                <div class="referral-box">
-                    <label>Refer a Friend</label>
+                <div style="margin-top: 0.5rem;">
+                    <label>🎁 Redeemable Rewards</label>
+                    <div id="customer-rewards-list" class="rewards-list">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading rewards...</div>
+                    </div>
+                </div>
+
+                <div style="border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 0.75rem;">
+                    <label>👥 Refer a Friend (+50 pts on 1st visit)</label>
                     <input type="tel" id="friend-phone" placeholder="Friend's Phone Number" />
-                    <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16;">Register Friend (+50 pts on 1st visit)</button>
+                    <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; padding: 0.6rem; font-size: 0.85rem;">Register Friend</button>
                 </div>
 
                 <a href="https://maps.google.com" target="_blank" class="review-link" onclick="claimReview()">
-                    ⭐ Leave Google Review & Claim +50 Points
+                    ⭐ Leave Google Review (+50 Points)
                 </a>
             </div>
         </div>
 
+        <!-- MENU TAB -->
         <div id="tab-menu" class="card hidden">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
                 <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">Live Menu</h3>
-                <span style="font-size: 0.7rem; color: var(--text-muted);">Tap item to zoom</span>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Tap to zoom</span>
             </div>
             <div id="menu-container" class="menu-grid">
                 <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
             </div>
         </div>
 
+        <!-- OWNER ADMIN TAB -->
         <div id="tab-admin" class="card hidden">
-            <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700; color: var(--accent);">Owner Menu Manager</h3>
-            <label>Category</label>
-            <input type="text" id="admin-cat" placeholder="e.g., Burgers & Grills" />
+            <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🔒 Owner Control Center</h3>
             
-            <label>Item Name</label>
-            <input type="text" id="admin-name" placeholder="e.g., Cheesy Burger" />
+            <div style="background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
+                <label style="color: var(--success); margin-bottom: 0.25rem;">Validate Customer Voucher</label>
+                <input type="text" id="voucher-input" placeholder="Enter 4-digit code (e.g. 4892)" style="margin-bottom: 0.5rem;" />
+                <button class="btn-main" onclick="validateVoucher()" style="background: var(--success); color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 0.75rem;">Verify Code</button>
+                <div id="voucher-result" class="hidden" style="text-align: center; border-top: 1px solid var(--border); padding-top: 0.5rem;">
+                    <img id="v-img" style="width: 60px; height: 60px; border-radius: 10px; object-fit: cover; margin-bottom: 4px;" />
+                    <div id="v-title" style="font-size: 0.85rem; font-weight: 700; color: var(--success);"></div>
+                    <div id="v-phone" style="font-size: 0.7rem; color: var(--text-muted);"></div>
+                </div>
+            </div>
+
+            <label>Add Custom Reward</label>
+            <input type="text" id="reward-title-input" placeholder="Reward Title (e.g. Free Dessert)" />
+            <input type="number" id="reward-cost-input" placeholder="Points Required (e.g. 100)" />
+            <input type="text" id="reward-img-input" placeholder="Image URL (optional)" />
+            <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward Tier</button>
             
-            <label>Price (MAD)</label>
-            <input type="text" id="admin-price" placeholder="e.g., 65" />
+            <label>Manage Rewards:</label>
+            <div id="admin-rewards-list" style="max-height: 100px; overflow-y: auto; margin-bottom: 1rem;"></div>
+
+            <label>Add Menu Item</label>
+            <input type="text" id="admin-cat" placeholder="Category (e.g., Burgers)" />
+            <input type="text" id="admin-name" placeholder="Item Name" />
+            <input type="text" id="admin-price" placeholder="Price in numbers (e.g. 65)" />
+            <input type="text" id="admin-img" placeholder="Image URL (optional)" />
+            <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.5rem; font-size: 0.8rem;">+ Add to Menu</button>
             
-            <label>Image URL (Optional)</label>
-            <input type="text" id="admin-img" placeholder="https://..." />
-            
-            <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1.25rem;">+ Add to Live Menu</button>
-            
-            <label style="margin-bottom: 0.5rem;">Active Inventory</label>
-            <div id="admin-menu-list" style="max-height: 160px; overflow-y: auto; padding-right: 2px;"></div>
+            <label>Manage Menu Items:</label>
+            <div id="admin-menu-list" style="max-height: 120px; overflow-y: auto;"></div>
         </div>
 
         <div id="feedback-msg" class="message-box hidden"></div>
     </div>
 
-    <!-- High-Resolution Image Zoom Modal -->
+    <!-- Image Zoom Modal -->
     <div id="image-modal" class="modal">
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
@@ -375,6 +520,11 @@ def serve_mobile_frontend():
                 if(adminBtn) adminBtn.classList.remove('hidden');
                 switchTab('admin');
             }
+            if(navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(() => {
+                    document.getElementById('geo-banner').style.display = 'block';
+                }, () => {});
+            }
         };
 
         function switchTab(tabName) {
@@ -390,6 +540,7 @@ def serve_mobile_frontend():
             if(tabName === 'rewards') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-rewards').classList.remove('hidden');
+                if(currentPhone) loadCustomerRewards();
             } else if(tabName === 'menu') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-menu').classList.remove('hidden');
@@ -399,6 +550,7 @@ def serve_mobile_frontend():
                 if(adminBtn) adminBtn.classList.add('active');
                 document.getElementById('tab-admin').classList.remove('hidden');
                 loadAdminMenu();
+                loadAdminRewards();
             }
         }
 
@@ -429,6 +581,129 @@ def serve_mobile_frontend():
             }
         }
 
+        async function loadCustomerRewards() {
+            try {
+                const res = await fetch('/api/rewards/' + currentSlug);
+                const rewards = await res.json();
+                const container = document.getElementById('customer-rewards-list');
+                if(!rewards || rewards.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No rewards configured.</div>';
+                    return;
+                }
+                container.innerHTML = rewards.map(r => {
+                    const img = r.image_url || 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500';
+                    return `
+                        <div class="reward-item">
+                            <img src="${img}" class="reward-thumb" />
+                            <div class="reward-info">
+                                <div class="reward-title">${r.title}</div>
+                                <div class="reward-cost">${r.points_required} pts</div>
+                            </div>
+                            <button class="redeem-btn" onclick="redeemReward(${r.id})">Redeem</button>
+                        </div>
+                    `;
+                }).join('');
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        async function redeemReward(rewardId) {
+            try {
+                const res = await fetch('/api/rewards/redeem', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: currentPhone, reward_id: rewardId, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('points-val').innerText = data.new_balance;
+                    alert(`SUCCESS! Show this code to your waiter:\n\nCODE: [ ${data.voucher_code} ]\nReward: ${data.reward_title}`);
+                    loadCustomerRewards();
+                } else {
+                    alert(data.detail || 'Redemption failed.');
+                }
+            } catch(e) {
+                alert('Connection error.');
+            }
+        }
+
+        async function validateVoucher() {
+            const code = document.getElementById('voucher-input').value;
+            const resBox = document.getElementById('voucher-result');
+            if(!code) { alert('Enter voucher code.'); return; }
+            try {
+                const res = await fetch('/api/admin/validate-voucher', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ code })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('v-img').src = data.image_url;
+                    document.getElementById('v-title').innerText = "✓ Validated: " + data.reward_title;
+                    document.getElementById('v-phone').innerText = "Client Phone: " + data.phone_number;
+                    resBox.classList.remove('hidden');
+                    document.getElementById('voucher-input').value = '';
+                } else {
+                    resBox.classList.add('hidden');
+                    alert(data.detail || 'Invalid code');
+                }
+            } catch(e) {
+                alert('Error validating code');
+            }
+        }
+
+        async function addRewardTier() {
+            const title = document.getElementById('reward-title-input').value;
+            const points_required = document.getElementById('reward-cost-input').value;
+            const image_url = document.getElementById('reward-img-input').value;
+            if(!title || !points_required) { alert('Fill in title and points.'); return; }
+            try {
+                const res = await fetch('/api/admin/rewards/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ restaurant_slug: currentSlug, title, points_required: parseInt(points_required), image_url })
+                });
+                const data = await res.json();
+                showMsg(data.message, 'success-msg');
+                document.getElementById('reward-title-input').value = '';
+                document.getElementById('reward-cost-input').value = '';
+                document.getElementById('reward-img-input').value = '';
+                loadAdminRewards();
+            } catch(e) {
+                alert('Error adding reward.');
+            }
+        }
+
+        async function loadAdminRewards() {
+            try {
+                const res = await fetch('/api/rewards/' + currentSlug);
+                const rewards = await res.json();
+                const container = document.getElementById('admin-rewards-list');
+                if(!rewards || rewards.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No rewards found.</div>';
+                    return;
+                }
+                container.innerHTML = rewards.map(r => `
+                    <div class="admin-item-row">
+                        <span><b>${r.title}</b> (${r.points_required} pts)</span>
+                        <button class="danger-btn" onclick="deleteReward(${r.id})" style="padding:2px 6px; font-size:0.7rem;">Delete</button>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        async function deleteReward(id) {
+            if(!confirm('Delete this reward?')) return;
+            try {
+                await fetch('/api/admin/rewards/' + id, { method: 'DELETE' });
+                loadAdminRewards();
+            } catch(e) {
+                alert('Error deleting reward.');
+            }
+        }
+
         function openModal(imgUrl, name, price) {
             document.getElementById('modal-img-tag').src = imgUrl;
             document.getElementById('modal-title').innerText = name;
@@ -446,7 +721,7 @@ def serve_mobile_frontend():
                 const items = await res.json();
                 const container = document.getElementById('admin-menu-list');
                 if(!items || items.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center; padding:1rem;">No inventory found.</div>';
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No items.</div>';
                     return;
                 }
                 container.innerHTML = items.map(item => `
@@ -458,9 +733,7 @@ def serve_mobile_frontend():
                         </div>
                     </div>
                 `).join('');
-            } catch(e) {
-                console.error(e);
-            }
+            } catch(e) {}
         }
 
         async function addMenuItem() {
@@ -468,7 +741,7 @@ def serve_mobile_frontend():
             const name = document.getElementById('admin-name').value;
             const price = document.getElementById('admin-price').value;
             const image_url = document.getElementById('admin-img').value;
-            if(!category || !name || !price) { alert('Please fill in category, name, and price.'); return; }
+            if(!category || !name || !price) { alert('Fill category, name, price.'); return; }
             try {
                 const res = await fetch('/api/admin/menu/add', {
                     method: 'POST',
@@ -488,7 +761,7 @@ def serve_mobile_frontend():
         }
 
         async function editPrice(id) {
-            const newPrice = prompt("Enter new price in MAD (e.g., 70):");
+            const newPrice = prompt("Enter new price in MAD:");
             if(!newPrice) return;
             try {
                 const res = await fetch('/api/admin/menu/' + id, {
@@ -505,11 +778,9 @@ def serve_mobile_frontend():
         }
 
         async function deleteItem(id) {
-            if(!confirm('Are you sure you want to delete this menu item?')) return;
+            if(!confirm('Delete item?')) return;
             try {
-                const res = await fetch('/api/admin/menu/' + id, { method: 'DELETE' });
-                const data = await res.json();
-                showMsg(data.message, 'success-msg');
+                await fetch('/api/admin/menu/' + id, { method: 'DELETE' });
                 loadAdminMenu();
             } catch(e) {
                 alert('Error deleting item.');
@@ -518,7 +789,7 @@ def serve_mobile_frontend():
 
         async function loginCustomer() {
             const phone = document.getElementById('phone-input').value;
-            if(!phone) { alert('Please enter your phone number.'); return; }
+            if(!phone) { alert('Enter phone number.'); return; }
             currentPhone = phone;
             try {
                 const res = await fetch('/api/customer/auth', {
@@ -531,7 +802,8 @@ def serve_mobile_frontend():
                     document.getElementById('points-val').innerText = data.points_balance;
                     document.getElementById('login-section').classList.add('hidden');
                     document.getElementById('dashboard-section').classList.remove('hidden');
-                    showMsg('Welcome back to SmartTable.ma!', 'success-msg');
+                    loadCustomerRewards();
+                    showMsg('Welcome!', 'success-msg');
                 } else {
                     showMsg(data.detail || 'Login failed', 'error-msg');
                 }
@@ -557,7 +829,7 @@ def serve_mobile_frontend():
 
         async function referFriend() {
             const friendPhone = document.getElementById('friend-phone').value;
-            if(!friendPhone) { alert("Please enter your friend's phone number."); return; }
+            if(!friendPhone) { alert("Enter friend's phone number."); return; }
             try {
                 const res = await fetch('/api/rewards/refer-friend', {
                     method: 'POST',
