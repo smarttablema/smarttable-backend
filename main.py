@@ -5,14 +5,14 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 
 SUPABASE_URL = "https://ygaklnfdrfuophgndnnp.supabase.co"
-SUPABASE_KEY = "sb_publishable_HfOTDDvOXVlB7IBiTnBdKg_FDnef..."
+SUPABASE_KEY = "sb_secret_d6gykHBup5RXtrEqSrvA2uw_Rsqqp7nK"
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception:
     supabase = None
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="3.1.2")
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -87,7 +87,6 @@ def serve_mobile_frontend():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SmartTable.ma - Table Experience</title>
-    <!-- Professional Browser Tab Logo (Favicon) -->
     <link rel="icon" type="image/png" href="https://img.icons8.com/color/48/qr-code.png">
     <style>
         :root {
@@ -102,24 +101,19 @@ def serve_mobile_frontend():
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { background-color: var(--bg-color); color: var(--text-main); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 1rem; }
         .mobile-container { width: 100%; max-width: 400px; background: var(--card-bg); border-radius: 24px; padding: 1.5rem; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.5); border: 1px solid #334155; }
-        
         .brand-header { text-align: center; margin-bottom: 1rem; }
         .logo { font-size: 1.5rem; font-weight: 900; color: var(--accent); letter-spacing: -0.5px; }
         .brand-tag { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
-
         .nav-tabs { display: flex; background: #0f172a; border-radius: 12px; padding: 4px; margin-bottom: 1rem; border: 1px solid #1e293b; }
         .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 8px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: 0.2s; }
         .tab-btn.active { background: var(--accent); color: #0f172a; }
-
         .card { background: #0f172a; border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid #1e293b; }
         input { width: 100%; padding: 0.75rem; border-radius: 10px; border: 1px solid #475569; background: #1e293b; color: white; font-size: 0.9rem; margin-bottom: 0.75rem; outline: none; }
         input:focus { border-color: var(--accent); }
         button.action-submit { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: var(--accent); color: #0f172a; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
-        
         .hidden { display: none !important; }
         .points-number { font-size: 2.5rem; font-weight: 900; color: var(--success); text-align: center; margin: 0.5rem 0; }
         .action-btn { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: #334155; color: white; font-weight: 600; cursor: pointer; margin-top: 0.5rem; }
-        
         .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 350px; overflow-y: auto; padding-right: 4px; }
         .menu-card { display: flex; align-items: center; background: #1e293b; border-radius: 12px; padding: 0.75rem; border: 1px solid #334155; gap: 0.75rem; }
         .menu-img { width: 50px; height: 50px; border-radius: 8px; object-fit: cover; background: #334155; }
@@ -127,7 +121,6 @@ def serve_mobile_frontend():
         .menu-name { font-size: 0.9rem; font-weight: 600; color: var(--text-main); }
         .menu-cat { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
         .menu-price { font-size: 0.85rem; font-weight: 700; color: var(--success); }
-
         .message-box { margin-top: 0.5rem; padding: 0.5rem; border-radius: 6px; font-size: 0.75rem; text-align: center; }
         .success-msg { background: rgba(34, 197, 94, 0.1); color: var(--success); border: 1px solid rgba(34, 197, 94, 0.2); }
     </style>
@@ -138,15 +131,11 @@ def serve_mobile_frontend():
             <div class="logo">SmartTable.ma</div>
             <div class="brand-tag">Table Experience</div>
         </div>
-
         <div class="nav-tabs" id="nav-tabs-container">
             <button class="tab-btn active" onclick="switchTab('rewards')">🏆 Rewards</button>
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
-            <!-- Owner tab is hidden by default for customers, unlocked via owner NFC card link -->
             <button class="tab-btn hidden" id="admin-tab-btn" onclick="switchTab('admin')">🔒 Owner</button>
         </div>
-
-        <!-- TAB 1: REWARDS -->
         <div id="tab-rewards">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem;">Check Your Points</h3>
@@ -159,16 +148,12 @@ def serve_mobile_frontend():
                 <button class="action-btn" onclick="claimReview()">⭐ Leave Google Review (+50 pts)</button>
             </div>
         </div>
-
-        <!-- TAB 2: MENU -->
         <div id="tab-menu" class="card hidden">
             <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--accent);">Live Restaurant Menu</h3>
             <div id="menu-container" class="menu-grid">
                 <div style="text-align:center; color:var(--text-muted); font-size:0.85rem;">Loading menu...</div>
             </div>
         </div>
-
-        <!-- TAB 3: OWNER ADMIN DASHBOARD -->
         <div id="tab-admin" class="card hidden">
             <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--accent);">Owner Menu Manager</h3>
             <input type="text" id="admin-cat" placeholder="Category (e.g., Burgers, Drinks)" />
@@ -177,15 +162,11 @@ def serve_mobile_frontend():
             <input type="text" id="admin-img" placeholder="Photo Image URL (optional)" />
             <button class="action-submit" onclick="addMenuItem()">+ Add Item to Live Menu</button>
         </div>
-
         <div id="feedback-msg" class="message-box hidden"></div>
     </div>
-
     <script>
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
-
-        // Check if the URL has the owner mode parameter when scanned from owner's exclusive NFC card
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
@@ -193,7 +174,6 @@ def serve_mobile_frontend():
                 switchTab('admin');
             }
         };
-
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(b => {
                 if(b.id !== 'admin-tab-btn' || !b.classList.contains('hidden')) {
@@ -203,7 +183,6 @@ def serve_mobile_frontend():
             document.getElementById('tab-rewards').classList.add('hidden');
             document.getElementById('tab-menu').classList.add('hidden');
             document.getElementById('tab-admin').classList.add('hidden');
-
             if(tabName === 'rewards') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-rewards').classList.remove('hidden');
@@ -216,7 +195,6 @@ def serve_mobile_frontend():
                 document.getElementById('tab-admin').classList.remove('hidden');
             }
         }
-
         async function loadMenu() {
             try {
                 const res = await fetch(`/api/menu/${currentSlug}`);
@@ -240,15 +218,12 @@ def serve_mobile_frontend():
                 console.error(e);
             }
         }
-
         async function addMenuItem() {
             const category = document.getElementById('admin-cat').value;
             const name = document.getElementById('admin-name').value;
             const price = document.getElementById('admin-price').value;
             const image_url = document.getElementById('admin-img').value;
-
             if(!category || !name || !price) { alert('Please fill in category, name, and price.'); return; }
-
             try {
                 const res = await fetch('/api/admin/menu/add', {
                     method: 'POST',
@@ -265,7 +240,6 @@ def serve_mobile_frontend():
                 alert('Error adding menu item.');
             }
         }
-
         async function loginCustomer() {
             const phone = document.getElementById('phone-input').value;
             if(!phone) { alert('Please enter phone number.'); return; }
@@ -281,7 +255,6 @@ def serve_mobile_frontend():
             document.getElementById('dashboard-section').classList.remove('hidden');
             showMsg('Welcome!', 'success-msg');
         }
-
         async function claimReview() {
             const res = await fetch('/api/rewards/claim-review', {
                 method: 'POST',
@@ -292,7 +265,6 @@ def serve_mobile_frontend():
             document.getElementById('points-val').innerText = data.new_balance;
             showMsg(data.message, 'success-msg');
         }
-
         function showMsg(text, className) {
             const box = document.getElementById('feedback-msg');
             box.innerText = text;
