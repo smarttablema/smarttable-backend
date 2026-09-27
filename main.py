@@ -12,13 +12,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.0.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.1.0")
 
 @app.on_event("startup")
 def startup_db():
     conn = get_db_connection()
     cur = conn.cursor()
-    # 1. Customers Table with PIN & Auth Support
     cur.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id SERIAL PRIMARY KEY,
@@ -30,7 +29,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    # 2. Cashback Audit Log Table (Supports reversals/edits)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS cashback_audit_log (
             id SERIAL PRIMARY KEY,
@@ -42,7 +40,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    # 3. POS Orders Table (End-of-day reports)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pos_orders (
             id SERIAL PRIMARY KEY,
@@ -52,7 +49,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    # 4. Redemption Queue & Vouchers
     cur.execute("""
         CREATE TABLE IF NOT EXISTS redemption_queue (
             id SERIAL PRIMARY KEY,
@@ -145,6 +141,7 @@ def health_check():
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
     clean_phone = normalize_phone(data.phone_number)
+    pin = data.pin_code.strip() if data.pin_code else "1234"
     if not re.match(r'^\+?\d{8,15}$', clean_phone):
         raise HTTPException(status_code=400, detail="Invalid phone number format.")
     try:
@@ -152,16 +149,23 @@ def authenticate_customer(data: CustomerAuth):
         cur = conn.cursor()
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
         customer = cur.fetchone()
+        
         if not customer:
+            # Register new user automatically with their chosen PIN
             cur.execute(
                 "INSERT INTO customers (phone_number, pin_code, points_balance, has_purchased) VALUES (%s, %s, 0, FALSE) RETURNING *;",
-                (clean_phone, data.pin_code)
+                (clean_phone, pin)
             )
             customer = cur.fetchone()
             conn.commit()
         else:
-            if customer["pin_code"] != data.pin_code:
-                raise HTTPException(status_code=401, detail="Incorrect security PIN code.")
+            # If account exists but has no PIN set, update it or verify
+            if not customer["pin_code"]:
+                cur.execute("UPDATE customers SET pin_code = %s WHERE phone_number = %s;", (pin, clean_phone))
+                conn.commit()
+            elif customer["pin_code"] != pin:
+                raise HTTPException(status_code=401, detail="Incorrect PIN code. Try again or check your digits.")
+
         cur.close()
         conn.close()
         return {"status": "success", "points_balance": customer["points_balance"]}
@@ -662,7 +666,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- WORLD-CLASS SAAS UI WITH POS CART, REVERSALS, PIN LOGIN & REPORTS ---
+# --- FRONTEND UI WITH REORDERED ADMIN TABS & PIN LOGINS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -730,7 +734,6 @@ def serve_mobile_frontend():
 
         .review-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; margin-top: 0.75rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 0.8rem; }
 
-        /* POS Touchscreen Grid */
         .pos-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 200px; overflow-y: auto; margin-bottom: 1rem; padding-right: 2px; }
         .pos-item-card { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 8px; text-align: center; cursor: pointer; transition: all 0.2s; }
         .pos-item-card:hover { border-color: var(--accent); background: var(--surface); }
@@ -741,7 +744,6 @@ def serve_mobile_frontend():
         .cart-box { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 0.85rem; max-height: 120px; overflow-y: auto; font-size: 0.8rem; }
         .cart-row { display: flex; justify-content: space-between; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 2px; }
 
-        /* Menu Grid */
         .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 360px; overflow-y: auto; padding-right: 2px; }
         .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; }
         .menu-img { width: 55px; height: 55px; border-radius: 10px; object-fit: cover; background: var(--surface); }
@@ -750,7 +752,6 @@ def serve_mobile_frontend():
         .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
-        /* Modals */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
         .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -768,7 +769,7 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        /* Admin Sub-nav with 7 items */
+        /* Reordered Admin Sub-nav: Queue, Menu, Reports, Cashback, POS, Rewards, Settings */
         .admin-subnav { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
         .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.52rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
         .admin-sub-btn span.nav-icon { font-size: 1rem; margin-bottom: 2px; display: block; line-height: 1; }
@@ -803,7 +804,7 @@ def serve_mobile_frontend():
                 <input type="tel" id="phone-input" placeholder="e.g., 0612345678" />
                 <label>Security PIN (4-Digits)</label>
                 <input type="password" id="pin-input" placeholder="e.g., 1234" maxlength="4" />
-                <button class="btn-main" onclick="loginCustomer()">Access My Account</button>
+                <button class="btn-main" onclick="loginCustomer()">Access / Register My Account</button>
             </div>
             
             <div id="dashboard-section" class="card hidden">
@@ -846,23 +847,23 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- OWNER CONTROL CENTER (7-TAB PRO DASHBOARD) -->
+        <!-- OWNER CONTROL CENTER (REORDERED 7-TAB PRO DASHBOARD) -->
         <div id="tab-admin" class="hidden">
             <div class="admin-subnav">
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
                     <span class="nav-icon">🔥</span><span class="nav-text">Queue</span>
                 </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('pos')" id="sub-btn-pos">
-                    <span class="nav-icon">🛒</span><span class="nav-text">POS</span>
-                </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('cashback')" id="sub-btn-cashback">
-                    <span class="nav-icon">⚡</span><span class="nav-text">Cashback</span>
+                <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
+                    <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('reports')" id="sub-btn-reports">
                     <span class="nav-icon">📊</span><span class="nav-text">Reports</span>
                 </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
-                    <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
+                <button class="admin-sub-btn" onclick="switchAdminSub('cashback')" id="sub-btn-cashback">
+                    <span class="nav-icon">⚡</span><span class="nav-text">Cashback</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('pos')" id="sub-btn-pos">
+                    <span class="nav-icon">🛒</span><span class="nav-text">POS</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
                     <span class="nav-icon">🎁</span><span class="nav-text">Rewards</span>
@@ -876,57 +877,33 @@ def serve_mobile_frontend():
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Redemption Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Active redemptions with customer names (auto-polls)</p>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Active redemptions with customer names</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No pending redemptions right now.</div>
                     </div>
                 </div>
             </div>
 
-            <!-- 2. TOUCHSCREEN FAST POS ORDER BUILDER -->
-            <div id="admin-sub-pos" class="admin-section hidden">
+            <!-- 2. MENU EDITOR -->
+            <div id="admin-sub-menu" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🛒 Touchscreen POS Builder</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Tap item cards to add quantities to order cart</p>
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
+                    <label>Category</label>
+                    <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
+                    <label>Item Name</label>
+                    <input type="text" id="admin-name" placeholder="Item Name" />
+                    <label>Price (MAD)</label>
+                    <input type="text" id="admin-price" placeholder="e.g. 65" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="admin-img" placeholder="https://..." />
+                    <button class="btn-main" onclick="addAdminMenu()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
                     
-                    <div id="pos-menu-grid" class="pos-grid">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.7rem; grid-column: span 2;">Loading items...</div>
-                    </div>
-
-                    <label>Order Cart:</label>
-                    <div id="pos-cart-box" class="cart-box">
-                        <div style="text-align: center; color: var(--text-muted);">Cart is empty</div>
-                    </div>
-
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; font-weight: 800; font-size: 0.95rem;">
-                        <span>Total:</span>
-                        <span id="pos-total-val" style="color: var(--accent);">0.00 MAD</span>
-                    </div>
-
-                    <button class="btn-main" onclick="confirmPOSOrder()" style="background: var(--success); color: white; padding: 0.7rem; font-size: 0.85rem;">Confirm & Submit Order ✓</button>
+                    <label>Existing Items:</label>
+                    <div id="admin-menu-list" style="max-height: 150px; overflow-y: auto;"></div>
                 </div>
             </div>
 
-            <!-- 3. CASHBACK POS WITH AUDIT LOG & REVERSAL -->
-            <div id="admin-sub-cashback" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">⚡ 10% Cashback & Audit Log</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Enter phone and bill amount. Mistakes can be reversed instantly below.</p>
-                    
-                    <label>Customer Phone Number</label>
-                    <input type="tel" id="cb-phone" placeholder="e.g. 0612345678" />
-                    
-                    <label>Total Bill Amount (MAD)</label>
-                    <input type="number" id="cb-amount" placeholder="e.g. 250" />
-                    
-                    <button class="btn-main" onclick="submitCashback()" style="background: var(--success); color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">Credit Cashback Points ✓</button>
-                    
-                    <label>Recent Transactions & Reversals:</label>
-                    <div id="cashback-log-container" style="max-height: 120px; overflow-y: auto;"></div>
-                </div>
-            </div>
-
-            <!-- 4. END-OF-DAY REPORTS -->
+            <!-- 3. END-OF-DAY REPORTS -->
             <div id="admin-sub-reports" class="admin-section hidden">
                 <div class="card" style="text-align: center;">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Z-Report Summary</h3>
@@ -950,22 +927,46 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 5. MENU EDITOR -->
-            <div id="admin-sub-menu" class="admin-section hidden">
+            <!-- 4. CASHBACK POS WITH AUDIT LOG & REVERSAL -->
+            <div id="admin-sub-cashback" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
-                    <label>Category</label>
-                    <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
-                    <label>Item Name</label>
-                    <input type="text" id="admin-name" placeholder="Item Name" />
-                    <label>Price (MAD)</label>
-                    <input type="text" id="admin-price" placeholder="e.g. 65" />
-                    <label>Image URL (Optional)</label>
-                    <input type="text" id="admin-img" placeholder="https://..." />
-                    <button class="btn-main" onclick="addMenuItem()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">⚡ 10% Cashback & Audit Log</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Enter phone and bill amount. Mistakes can be reversed instantly below.</p>
                     
-                    <label>Existing Items:</label>
-                    <div id="admin-menu-list" style="max-height: 150px; overflow-y: auto;"></div>
+                    <label>Customer Phone Number</label>
+                    <input type="tel" id="cb-phone" placeholder="e.g. 0612345678" />
+                    
+                    <label>Total Bill Amount (MAD)</label>
+                    <input type="number" id="cb-amount" placeholder="e.g. 250" />
+                    
+                    <button class="btn-main" onclick="submitCashback()" style="background: var(--success); color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">Credit Cashback Points ✓</button>
+                    
+                    <label>Recent Transactions & Reversals:</label>
+                    <div id="cashback-log-container" style="max-height: 120px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- 5. TOUCHSCREEN FAST POS ORDER BUILDER -->
+            <div id="admin-sub-pos" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🛒 Touchscreen POS Builder</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Tap item cards to add quantities to order cart</p>
+                    
+                    <div id="pos-menu-grid" class="pos-grid">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.7rem; grid-column: span 2;">Loading items...</div>
+                    </div>
+
+                    <label>Order Cart:</label>
+                    <div id="pos-cart-box" class="cart-box">
+                        <div style="text-align: center; color: var(--text-muted);">Cart is empty</div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; font-weight: 800; font-size: 0.95rem;">
+                        <span>Total:</span>
+                        <span id="pos-total-val" style="color: var(--accent);">0.00 MAD</span>
+                    </div>
+
+                    <button class="btn-main" onclick="confirmPOSOrder()" style="background: var(--success); color: white; padding: 0.7rem; font-size: 0.85rem;">Confirm & Submit Order ✓</button>
                 </div>
             </div>
 
@@ -1011,11 +1012,11 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- VOUCHER MODAL WITH 30-SEC CANCELLATION GRACE PERIOD -->
+    <!-- VOUCHER MODAL -->
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted);">Show PIN to waiter. Regret it? Cancel within grace period:</p>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">Show PIN to waiter:</p>
             <div id="modal-voucher-code" class="voucher-code-box">----</div>
             <img id="modal-voucher-img" class="modal-img" src="" style="height: 120px; margin-bottom: 0.5rem;" />
             <div id="modal-voucher-title" style="font-size: 0.85rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.75rem;"></div>
@@ -1114,7 +1115,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'pos', 'cashback', 'reports', 'menu', 'rewards', 'settings'].forEach(s => {
+            ['queue', 'menu', 'reports', 'cashback', 'pos', 'rewards', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -1130,7 +1131,6 @@ def serve_mobile_frontend():
             if(subName === 'reports') loadDailyReport();
         }
 
-        // TOUCHSCREEN POS CART LOGIC
         async function loadPOSMenu() {
             try {
                 const res = await fetch('/api/menu/' + currentSlug);
@@ -1361,7 +1361,7 @@ def serve_mobile_frontend():
                     document.getElementById('login-section').classList.add('hidden');
                     document.getElementById('dashboard-section').classList.remove('hidden');
                     loadCustomerData();
-                    showToast('Welcome back!');
+                    showToast('Welcome!');
                 } else {
                     showToast(data.detail || 'Login failed', true);
                 }
