@@ -12,18 +12,19 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.2.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.3.0")
 
 @app.on_event("startup")
 def startup_db():
     conn = get_db_connection()
     cur = conn.cursor()
-    # Ensure customers table and pin_code column exist safely
+    # Enhanced Customers Table with password & recovery pin
     cur.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id SERIAL PRIMARY KEY,
             phone_number VARCHAR(20) UNIQUE,
-            pin_code VARCHAR(10) DEFAULT '1234',
+            password VARCHAR(100) DEFAULT 'password123',
+            recovery_pin VARCHAR(10) DEFAULT '1234',
             points_balance INT DEFAULT 0,
             has_purchased BOOLEAN DEFAULT FALSE,
             referred_by VARCHAR(20),
@@ -31,9 +32,22 @@ def startup_db():
         );
     """)
     try:
-        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS pin_code VARCHAR(10) DEFAULT '1234';")
+        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'password123';")
+        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS recovery_pin VARCHAR(10) DEFAULT '1234';")
     except Exception:
         conn.rollback()
+
+    # Owner Admin Table for secure login
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS owner_admin (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(50) UNIQUE,
+            password VARCHAR(100),
+            recovery_pin VARCHAR(10)
+        );
+    """)
+    # Insert default owner admin if not exists
+    cur.execute("INSERT INTO owner_admin (username, password, recovery_pin) VALUES ('admin', 'admin123', '9999') ON CONFLICT (username) DO NOTHING;")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS cashback_audit_log (
@@ -99,8 +113,13 @@ def normalize_phone(phone: str) -> str:
 
 class CustomerAuth(BaseModel):
     phone_number: str
-    pin_code: str = "1234"
+    password: str = "password123"
+    recovery_pin: str = "1234"
     restaurant_slug: str = "default-restaurant"
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
 
 class CashbackProcess(BaseModel):
     phone_number: str
@@ -137,11 +156,6 @@ class RewardCreate(BaseModel):
     points_required: int
     image_url: str = ""
 
-class TierCreate(BaseModel):
-    restaurant_slug: str = "default-restaurant"
-    name: str
-    min_points: int
-
 class SettingsUpdate(BaseModel):
     restaurant_slug: str = "default-restaurant"
     review_points: int
@@ -160,7 +174,9 @@ def health_check():
 @app.post("/api/customer/auth")
 def authenticate_customer(data: CustomerAuth):
     clean_phone = normalize_phone(data.phone_number)
-    pin = data.pin_code.strip() if data.pin_code else "1234"
+    pwd = data.password.strip() if data.password else "password123"
+    pin = data.recovery_pin.strip() if data.recovery_pin else "1234"
+    
     if not re.match(r'^\+?\d{8,15}$', clean_phone):
         raise HTTPException(status_code=400, detail="Invalid phone number format.")
     try:
@@ -170,22 +186,41 @@ def authenticate_customer(data: CustomerAuth):
         customer = cur.fetchone()
         
         if not customer:
+            # Register new customer with password and recovery PIN
             cur.execute(
-                "INSERT INTO customers (phone_number, pin_code, points_balance, has_purchased) VALUES (%s, %s, 0, FALSE) RETURNING *;",
-                (clean_phone, pin)
+                "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, has_purchased) VALUES (%s, %s, %s, 0, FALSE) RETURNING *;",
+                (clean_phone, pwd, pin)
             )
             customer = cur.fetchone()
             conn.commit()
         else:
-            if not customer.get("pin_code"):
-                cur.execute("UPDATE customers SET pin_code = %s WHERE phone_number = %s;", (pin, clean_phone))
-                conn.commit()
-            elif str(customer.get("pin_code", "1234")) != pin:
-                raise HTTPException(status_code=401, detail="Incorrect PIN code.")
+            # If logging in, check password or allow recovery PIN override if password forgot
+            stored_pwd = customer.get("password") or "password123"
+            stored_pin = customer.get("recovery_pin") or "1234"
+            
+            if stored_pwd != pwd and stored_pin != pin:
+                raise HTTPException(status_code=401, detail="Incorrect password or recovery PIN.")
 
         cur.close()
         conn.close()
         return {"status": "success", "points_balance": customer["points_balance"]}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/login")
+def admin_login(data: AdminLogin):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM owner_admin WHERE username = %s;", (data.username.strip(),))
+        admin = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not admin or admin["password"] != data.password.strip():
+            raise HTTPException(status_code=401, detail="Invalid owner credentials.")
+        return {"status": "success", "message": "Owner login authorized."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -594,7 +629,7 @@ def refer_friend(data: ReferralCreate):
             raise HTTPException(status_code=400, detail="This friend already has an account.")
         
         cur.execute(
-            "INSERT INTO customers (phone_number, pin_code, points_balance, referred_by, has_purchased) VALUES (%s, '1234', 0, %s, FALSE);",
+            "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, referred_by, has_purchased) VALUES (%s, 'password123', '1234', 0, %s, FALSE);",
             (friend_phone, ref_phone)
         )
         conn.commit()
@@ -606,7 +641,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH CORRECT TAB ORDER & SHIFT CONTROLS ---
+# --- FRONTEND UI WITH PROFESSIONAL MODALS & 3-TIER AUTH ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -692,6 +727,7 @@ def serve_mobile_frontend():
         .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
+        /* Professional Modals */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
         .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -709,7 +745,6 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        /* EXACT TAB ORDER: Queue, Menu, Reports, Rewards, Cashback, POS, Settings */
         .admin-subnav { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
         .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.52rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
         .admin-sub-btn span.nav-icon { font-size: 1rem; margin-bottom: 2px; display: block; line-height: 1; }
@@ -724,6 +759,23 @@ def serve_mobile_frontend():
 <body>
     <div id="toast-banner">✓ Action completed successfully!</div>
 
+    <!-- OWNER ADMIN LOGIN GATE -->
+    <div id="admin-login-modal" class="modal" style="display: flex;">
+        <div class="modal-content" style="max-width: 380px;">
+            <div class="logo" style="margin-bottom: 0.5rem;">SmartTable<span>.ma</span></div>
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Owner Control Center</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter owner credentials to access POS & reports</p>
+            
+            <label>Username</label>
+            <input type="text" id="owner-user" placeholder="e.g. admin" />
+            
+            <label>Password</label>
+            <input type="password" id="owner-pass" placeholder="••••••••" />
+            
+            <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.5rem;">Authorize & Open Dashboard</button>
+        </div>
+    </div>
+
     <div class="app-frame">
         <div class="brand-header">
             <div class="logo">SmartTable<span>.ma</span></div>
@@ -736,15 +788,17 @@ def serve_mobile_frontend():
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
         </div>
 
-        <!-- CLIENT: REWARDS TAB WITH PIN LOGIN -->
+        <!-- CLIENT: REWARDS TAB WITH PHONE, PASSWORD & RECOVERY PIN -->
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Portal</h3>
                 <label>Phone Number</label>
                 <input type="tel" id="phone-input" placeholder="e.g., 0612345678" />
-                <label>Security PIN (4-Digits)</label>
-                <input type="password" id="pin-input" placeholder="e.g., 1234" maxlength="4" />
-                <button class="btn-main" onclick="loginCustomer()">Access / Register My Account</button>
+                <label>Password</label>
+                <input type="password" id="password-input" placeholder="Your account password" />
+                <label>Recovery PIN (4-Digits for Reset)</label>
+                <input type="password" id="recovery-pin-input" placeholder="e.g., 1234" maxlength="4" />
+                <button class="btn-main" onclick="loginCustomer()">Access / Register Account</button>
             </div>
             
             <div id="dashboard-section" class="card hidden">
@@ -787,7 +841,7 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- OWNER CONTROL CENTER (EXACT TAB ORDER REQUESTED) -->
+        <!-- OWNER CONTROL CENTER -->
         <div id="tab-admin" class="hidden">
             <div class="admin-subnav">
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
@@ -843,7 +897,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 3. REPORTS (WITH SHIFT INFO & CLEAR BUTTON) -->
+            <!-- 3. REPORTS WITH PROFESSIONAL MODAL CLEAR TRIGGER -->
             <div id="admin-sub-reports" class="admin-section hidden">
                 <div class="card" style="text-align: center;">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
@@ -865,7 +919,7 @@ def serve_mobile_frontend():
                         <div id="rep-cb-pts" style="font-size: 1rem; font-weight: 800; color: var(--accent);">0 pts</div>
                     </div>
 
-                    <button class="danger-btn" onclick="clearReports()" style="width: 100%; padding: 0.6rem; font-size: 0.8rem; border-radius: 10px;">🗑️ Clear / Reset Shift Data</button>
+                    <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.6rem; font-size: 0.8rem; border-radius: 10px;">🗑️ Clear / Reset Shift Data</button>
                 </div>
             </div>
 
@@ -929,7 +983,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 7. SETTINGS (WITH CASHBACK % & SHIFT HOURS) -->
+            <!-- 7. SETTINGS -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign & Shift Settings</h3>
@@ -960,7 +1014,17 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- MODALS -->
+    <!-- PROFESSIONAL CONFIRMATION MODAL FOR CLEARING REPORTS -->
+    <div id="clear-reports-modal" class="modal">
+        <div class="modal-content">
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">This will permanently wipe all daily orders and cashback logs for the current shift. Are you sure?</p>
+            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.5rem;">Yes, Clear Shift Data</button>
+            <button class="close-modal" onclick="document.getElementById('clear-reports-modal').style.display='none'">Cancel</button>
+        </div>
+    </div>
+
+    <!-- OTHER MODALS -->
     <div id="redeem-name-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Claim Reward</h3>
@@ -1002,21 +1066,45 @@ def serve_mobile_frontend():
             loadRestaurantSettings();
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
-                document.getElementById('client-nav').classList.add('hidden');
-                document.getElementById('tab-rewards').classList.add('hidden');
-                document.getElementById('tab-admin').classList.remove('hidden');
-                document.getElementById('app-subtitle').innerText = "Owner Control Center";
-                loadAdminQueue();
-                loadPOSMenu();
-                loadCashbackLog();
-                loadDailyReport();
-                loadAdminMenu();
-                loadAdminRewards();
-                setInterval(loadAdminQueue, 5000);
+                // Show admin login modal first
+                document.getElementById('admin-login-modal').style.display = 'flex';
             } else {
                 loadMenu();
             }
         };
+
+        async function loginOwner() {
+            const user = document.getElementById('owner-user').value.trim();
+            const pass = document.getElementById('owner-pass').value.trim();
+            if(!user || !pass) { showToast('Enter username and password', true); return; }
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('admin-login-modal').style.display = 'none';
+                    document.getElementById('client-nav').classList.add('hidden');
+                    document.getElementById('tab-rewards').classList.add('hidden');
+                    document.getElementById('tab-admin').classList.remove('hidden');
+                    document.getElementById('app-subtitle').innerText = "Owner Control Center";
+                    loadAdminQueue();
+                    loadPOSMenu();
+                    loadCashbackLog();
+                    loadDailyReport();
+                    loadAdminMenu();
+                    loadAdminRewards();
+                    setInterval(loadAdminQueue, 5000);
+                    showToast('Owner authorized successfully!');
+                } else {
+                    showToast(data.detail || 'Invalid login', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
 
         async function loadRestaurantSettings() {
             try {
@@ -1182,12 +1270,16 @@ def serve_mobile_frontend():
             } catch(e) {}
         }
 
-        async function clearReports() {
-            if(!confirm('Clear all shift report data and logs?')) return;
+        function openClearReportsModal() {
+            document.getElementById('clear-reports-modal').style.display = 'flex';
+        }
+
+        async function executeClearReports() {
+            document.getElementById('clear-reports-modal').style.display = 'none';
             try {
                 const res = await fetch('/api/admin/' + currentSlug + '/reports/clear', { method: 'POST' });
                 if(res.ok) {
-                    showToast('Shift data cleared!');
+                    showToast('Shift data cleared successfully!');
                     loadDailyReport();
                     loadCashbackLog();
                 }
@@ -1309,14 +1401,15 @@ def serve_mobile_frontend():
 
         async function loginCustomer() {
             const phone = document.getElementById('phone-input').value.trim();
-            const pin = document.getElementById('pin-input').value.trim();
-            if(!phone || !pin) { showToast('Please enter phone and PIN code', true); return; }
+            const password = document.getElementById('password-input').value.trim();
+            const recoveryPin = document.getElementById('recovery-pin-input').value.trim();
+            if(!phone || !password || !recoveryPin) { showToast('Please enter phone, password, and recovery PIN', true); return; }
             currentPhone = phone;
             try {
                 const res = await fetch('/api/customer/auth', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone, pin_code: pin, restaurant_slug: currentSlug })
+                    body: JSON.stringify({ phone_number: phone, password: password, recovery_pin: recoveryPin, restaurant_slug: currentSlug })
                 });
                 const data = await res.json();
                 if(res.ok) {
