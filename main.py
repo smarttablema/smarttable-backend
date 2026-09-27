@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.2.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.3.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -706,6 +706,7 @@ async def get_redemption_queue(slug: str):
                 "customer_name": r["customer_name"],
                 "reward_item": r["reward_item"],
                 "security_pin": r["security_pin"],
+                "raw_time": r["created_at"].isoformat(),
                 "time": r["created_at"].strftime("%H:%M:%S")
             })
         return {"queue": queue}
@@ -777,7 +778,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH NFC URL TABLE PARAMETER LOCKING ---
+# --- FRONTEND UI WITH TIME-SENSITIVE QUEUE URGENCY COLORING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -888,7 +889,13 @@ def serve_mobile_frontend():
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
-        .redemption-card { background: var(--bg-deep); border-left: 4px solid var(--accent); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+        
+        /* URGENCY COLORING FOR LIVE QUEUE */
+        .redemption-card { background: var(--bg-deep); border-left: 4px solid var(--accent); padding: 12px; border-radius: 10px; border: 1px solid var(--border); transition: all 0.3s ease; }
+        .redemption-card.urgency-normal { border-left-color: var(--success); }
+        .redemption-card.urgency-orange { border-left-color: #f97316; background: rgba(249, 115, 22, 0.05); }
+        .redemption-card.urgency-red { border-left-color: var(--danger); background: rgba(239, 68, 68, 0.08); box-shadow: 0 0 15px rgba(239, 68, 68, 0.25); }
+
         .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
         
         .auth-sub-toggle { display: flex; gap: 8px; margin-bottom: 1rem; }
@@ -1079,7 +1086,7 @@ def serve_mobile_frontend():
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Orders & Redemptions Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Real-time NFC table orders & redemptions</p>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Oldest orders turn Orange / Red for attention</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
                     </div>
@@ -1296,7 +1303,6 @@ def serve_mobile_frontend():
         window.onload = function() {
             loadRestaurantSettings();
             
-            // Read NFC / QR Table URL Parameter (e.g. ?table=3)
             const urlParams = new URLSearchParams(window.location.search);
             const tableParam = urlParams.get('table');
             const tableContainer = document.getElementById('table-selection-container');
@@ -1867,18 +1873,36 @@ def serve_mobile_frontend():
                     container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
                     return;
                 }
-                container.innerHTML = data.queue.map(item => `
-                    <div class="redemption-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                            <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
-                            <span style="font-size: 0.65rem; color: var(--text-muted);">${item.time}</span>
+                
+                const now = new Date();
+
+                container.innerHTML = data.queue.map(item => {
+                    const orderDate = new Date(item.raw_time);
+                    const diffMinutes = Math.floor((now - orderDate) / 60000);
+
+                    let urgencyClass = 'urgency-normal';
+                    let timeBadgeText = `${diffMinutes}m ago`;
+                    if(diffMinutes >= 5 && diffMinutes < 10) {
+                        urgencyClass = 'urgency-orange';
+                        timeBadgeText = `⚠️ ${diffMinutes}m waiting (Attention!)`;
+                    } else if(diffMinutes >= 10) {
+                        urgencyClass = 'urgency-red';
+                        timeBadgeText = `🚨 ${diffMinutes}m waiting (URGENT!)`;
+                    }
+
+                    return `
+                        <div class="redemption-card ${urgencyClass}">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
+                                <span style="font-size: 0.7rem; font-weight: 700; color: ${diffMinutes >= 5 ? 'var(--accent)' : 'var(--text-muted)'};">${timeBadgeText}</span>
+                            </div>
+                            <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
+                            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
+                            ${item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : '<div style="font-size: 0.7rem; color: var(--success); font-weight: 700; margin: 4px 0;">⚡ NFC App Order - Automatic Cashback Applied</div>'}
+                            <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
                         </div>
-                        <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
-                        <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
-                        ${item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : '<div style="font-size: 0.7rem; color: var(--success); font-weight: 700; margin: 4px 0;">⚡ NFC App Order - Automatic Cashback Applied</div>'}
-                        <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             } catch(e) {}
         }
 
@@ -2014,7 +2038,7 @@ def serve_mobile_frontend():
 
         async function addRewardTier() {
             const title = document.getElementById('reward-title-input').value;
-            const points_required = document.getElementById('reward-cost-input').value;
+            const points_required = document.getElementById('reward-cost-input5').value || document.getElementById('reward-cost-input').value;
             const image_url = document.getElementById('reward-img-input').value;
             if(!title || !points_required) { showToast('Fill title and points', true); return; }
             await fetch('/api/admin/rewards/add', {
@@ -2058,7 +2082,7 @@ def serve_mobile_frontend():
 </html>
     """
 
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+### How this works for the owner:
+* **Fresh Orders (< 5 mins):** Displayed with a standard clean border.
+* **Waiting Orders (5 to 10 mins):** Automatically turn **Orange** with an attention badge warning the staff.
+* **Overdue Orders (10+ mins):** Glow **Red** to ensure no customer order ever slips through the cracks when the restaurant is full!
