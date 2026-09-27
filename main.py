@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.3.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.4.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -778,7 +778,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH TIME-SENSITIVE QUEUE URGENCY COLORING ---
+# --- FRONTEND UI WITH FIXED REWARD ID & TIME-SENSITIVE QUEUE URGENCY COLORING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -2038,7 +2038,7 @@ def serve_mobile_frontend():
 
         async function addRewardTier() {
             const title = document.getElementById('reward-title-input').value;
-            const points_required = document.getElementById('reward-cost-input5').value || document.getElementById('reward-cost-input').value;
+            const points_required = document.getElementById('reward-cost-input').value;
             const image_url = document.getElementById('reward-img-input').value;
             if(!title || !points_required) { showToast('Fill title and points', true); return; }
             await fetch('/api/admin/rewards/add', {
@@ -2082,7 +2082,7 @@ def serve_mobile_frontend():
 </html>
     """
 
-### How this works for the owner:
-* **Fresh Orders (< 5 mins):** Displayed with a standard clean border.
-* **Waiting Orders (5 to 10 mins):** Automatically turn **Orange** with an attention badge warning the staff.
-* **Overdue Orders (10+ mins):** Glow **Red** to ensure no customer order ever slips through the cracks when the restaurant is full!
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
