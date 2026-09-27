@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.7.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.8.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -796,7 +796,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL POLISHED CLIENT REWARDS & BALANCE REFRESH ---
+# --- FRONTEND UI 100% AUTOMATED VIA NFC URL PARAMETER ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -840,15 +840,14 @@ def serve_mobile_frontend():
         .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); position: relative; }
         
         label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        input, textarea, select { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
-        input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        input, textarea { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
+        input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
         
         .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
         .btn-main:active { transform: scale(0.98); }
         
         .hidden { display: none !important; }
         
-        /* PROFESSIONALLY DESIGNED BALANCE COMPONENT */
         .wallet-card { background: linear-gradient(135deg, rgba(26, 38, 66, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 16px; padding: 1.25rem; text-align: center; margin-bottom: 1.25rem; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
         .wallet-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
         .tier-badge { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 4px 10px; border-radius: 20px; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -859,7 +858,6 @@ def serve_mobile_frontend():
         .wallet-balance-number { font-size: 2.8rem; font-weight: 800; color: var(--success); letter-spacing: -1px; line-height: 1.1; margin: 0.2rem 0 0.5rem 0; text-shadow: 0 2px 10px rgba(16, 185, 129, 0.2); }
         .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 12px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; }
 
-        /* REFINED REDEEMABLE REWARDS LIST */
         .rewards-section-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.6rem; display: flex; align-items: center; gap: 6px; }
         .rewards-list { display: flex; flex-direction: column; gap: 0.65rem; max-height: 180px; overflow-y: auto; margin-bottom: 1rem; padding-right: 3px; }
         
@@ -954,7 +952,8 @@ def serve_mobile_frontend():
         .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
         .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 14px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
         
-        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
+        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.85rem; }
+        .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700; text-align: center; margin-bottom: 0.85rem; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -1081,10 +1080,8 @@ def serve_mobile_frontend():
                     <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">📖 Interactive Menu & Order</h3>
                 </div>
 
-                <!-- NFC Locked Table Banner or Dropdown -->
-                <div id="table-selection-container">
-                    <!-- Populated dynamically via JS based on URL param -->
-                </div>
+                <!-- 100% AUTOMATED NFC TABLE STATUS -->
+                <div id="table-selection-container"></div>
 
                 <div id="menu-container" class="menu-grid">
                     <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
@@ -1100,7 +1097,7 @@ def serve_mobile_frontend():
                     <span id="app-total-val" style="color: var(--accent);">0.00 MAD</span>
                 </div>
 
-                <button class="btn-main" onclick="submitAppOrder()" style="background: var(--success); color: white; padding: 0.75rem; font-size: 0.9rem;">Place App Order & Earn Cashback ✓</button>
+                <button class="btn-main" id="place-order-btn" onclick="submitAppOrder()" style="background: var(--success); color: white; padding: 0.75rem; font-size: 0.9rem;">Place App Order & Earn Cashback ✓</button>
             </div>
         </div>
 
@@ -1346,7 +1343,7 @@ def serve_mobile_frontend():
         let posCart = {};
         let appCart = {};
         let menuItemsCache = [];
-        let lockedTableNumber = '1';
+        let lockedTableNumber = null;
         
         window.onload = function() {
             loadRestaurantSettings();
@@ -1364,16 +1361,15 @@ def serve_mobile_frontend():
                     </div>
                 `;
             } else {
+                // Fully automated lock: Disable ordering if no NFC tag / table param is scanned
                 tableContainer.innerHTML = `
-                    <label>Select Your Table #</label>
-                    <select id="app-table-num" style="padding: 8px; font-size: 0.85rem; margin-bottom: 0.85rem;">
-                        <option value="1">Table 1</option>
-                        <option value="2">Table 2</option>
-                        <option value="3">Table 3</option>
-                        <option value="4">Table 4</option>
-                        <option value="VIP">VIP Table</option>
-                    </select>
+                    <div class="table-badge-unlocked">
+                        ⚠️ No Table NFC Tag Detected!<br>Please scan the NFC sticker or QR code on your table to place an order.
+                    </div>
                 `;
+                document.getElementById('place-order-btn').disabled = true;
+                document.getElementById('place-order-btn').style.opacity = '0.5';
+                document.getElementById('place-order-btn').style.cursor = 'not-allowed';
             }
 
             if(urlParams.get('mode') === 'admin') {
@@ -1702,6 +1698,10 @@ def serve_mobile_frontend():
         }
 
         function addToAppCart(id) {
+            if(!lockedTableNumber) {
+                showToast('Please scan your table NFC tag first!', true);
+                return;
+            }
             const item = menuItemsCache.find(i => i.id === id);
             if(!item) return;
             if(!appCart[id]) {
@@ -1731,11 +1731,12 @@ def serve_mobile_frontend():
         }
 
         async function submitAppOrder() {
+            if(!lockedTableNumber) {
+                showToast('Table NFC tag required to place order.', true);
+                return;
+            }
             const keys = Object.keys(appCart);
             if(keys.length === 0) { showToast('Your order cart is empty!', true); return; }
-            
-            const tableSelect = document.getElementById('app-table-num');
-            const tableNum = tableSelect ? tableSelect.value : lockedTableNumber;
 
             let summaryParts = [];
             let total = 0;
@@ -1753,13 +1754,13 @@ def serve_mobile_frontend():
                         restaurant_slug: currentSlug,
                         items_summary: summaryParts.join(', '),
                         total_amount: total,
-                        table_number: tableNum,
+                        table_number: lockedTableNumber,
                         customer_phone: currentPhone
                     })
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    showToast(`🎉 Order placed for Table ${tableNum}! Sent to kitchen.`);
+                    showToast(`🎉 Order placed for Table ${lockedTableNumber}! Sent to kitchen.`);
                     appCart = {};
                     renderAppCart();
                     triggerRefreshBalance();
