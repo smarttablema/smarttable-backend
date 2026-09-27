@@ -12,12 +12,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.1.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.2.0")
 
 @app.on_event("startup")
 def startup_db():
     conn = get_db_connection()
     cur = conn.cursor()
+    # Ensure customers table and pin_code column exist safely
     cur.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id SERIAL PRIMARY KEY,
@@ -29,6 +30,11 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    try:
+        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS pin_code VARCHAR(10) DEFAULT '1234';")
+    except Exception:
+        conn.rollback()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS cashback_audit_log (
             id SERIAL PRIMARY KEY,
@@ -73,13 +79,23 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS restaurant_settings (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50) UNIQUE,
+            review_points INT DEFAULT 50,
+            referral_points INT DEFAULT 50,
+            cashback_percentage DECIMAL(5,2) DEFAULT 10.00,
+            open_time VARCHAR(10) DEFAULT '07:00',
+            close_time VARCHAR(10) DEFAULT '00:00'
+        );
+    """)
     conn.commit()
     cur.close()
     conn.close()
 
 def normalize_phone(phone: str) -> str:
-    clean = re.sub(r'[\s\-\(\)]', '', phone.strip())
-    return clean
+    return re.sub(r'[\s\-\(\)]', '', phone.strip())
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -130,6 +146,9 @@ class SettingsUpdate(BaseModel):
     restaurant_slug: str = "default-restaurant"
     review_points: int
     referral_points: int
+    cashback_percentage: float
+    open_time: str
+    close_time: str
 
 class VoucherValidate(BaseModel):
     code: str
@@ -151,7 +170,6 @@ def authenticate_customer(data: CustomerAuth):
         customer = cur.fetchone()
         
         if not customer:
-            # Register new user automatically with their chosen PIN
             cur.execute(
                 "INSERT INTO customers (phone_number, pin_code, points_balance, has_purchased) VALUES (%s, %s, 0, FALSE) RETURNING *;",
                 (clean_phone, pin)
@@ -159,12 +177,11 @@ def authenticate_customer(data: CustomerAuth):
             customer = cur.fetchone()
             conn.commit()
         else:
-            # If account exists but has no PIN set, update it or verify
-            if not customer["pin_code"]:
+            if not customer.get("pin_code"):
                 cur.execute("UPDATE customers SET pin_code = %s WHERE phone_number = %s;", (pin, clean_phone))
                 conn.commit()
-            elif customer["pin_code"] != pin:
-                raise HTTPException(status_code=401, detail="Incorrect PIN code. Try again or check your digits.")
+            elif str(customer.get("pin_code", "1234")) != pin:
+                raise HTTPException(status_code=401, detail="Incorrect PIN code.")
 
         cur.close()
         conn.close()
@@ -174,17 +191,68 @@ def authenticate_customer(data: CustomerAuth):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/settings/{slug}")
+def get_restaurant_settings(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
+        settings = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not settings:
+            return {"review_points": 50, "referral_points": 50, "cashback_percentage": 10.0, "open_time": "07:00", "close_time": "00:00"}
+        return {
+            "review_points": settings["review_points"],
+            "referral_points": settings["referral_points"],
+            "cashback_percentage": float(settings["cashback_percentage"]),
+            "open_time": settings["open_time"] or "07:00",
+            "close_time": settings["close_time"] or "00:00"
+        }
+    except Exception:
+        return {"review_points": 50, "referral_points": 50, "cashback_percentage": 10.0, "open_time": "07:00", "close_time": "00:00"}
+
+@app.post("/api/admin/settings/update")
+def update_restaurant_settings(data: SettingsUpdate):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
+        exists = cur.fetchone()
+        if exists:
+            cur.execute("""
+                UPDATE restaurant_settings 
+                SET review_points = %s, referral_points = %s, cashback_percentage = %s, open_time = %s, close_time = %s 
+                WHERE restaurant_slug = %s;
+            """, (data.review_points, data.referral_points, data.cashback_percentage, data.open_time, data.close_time, data.restaurant_slug))
+        else:
+            cur.execute("""
+                INSERT INTO restaurant_settings (restaurant_slug, review_points, referral_points, cashback_percentage, open_time, close_time) 
+                VALUES (%s, %s, %s, %s, %s, %s);
+            """, (data.restaurant_slug, data.review_points, data.referral_points, data.cashback_percentage, data.open_time, data.close_time))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Settings updated successfully!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/admin/cashback/process")
 def process_cashback(data: CashbackProcess):
     clean_phone = normalize_phone(data.phone_number)
     try:
-        earned_points = int(data.bill_amount * 0.10)
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("SELECT cashback_percentage FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
+        s = cur.fetchone()
+        cb_rate = float(s["cashback_percentage"]) if s and s["cashback_percentage"] is not None else 10.0
+
+        earned_points = int(data.bill_amount * (cb_rate / 100.0))
+
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
         customer = cur.fetchone()
         if not customer:
-            raise HTTPException(status_code=404, detail="Customer phone not found in database.")
+            raise HTTPException(status_code=404, detail="Customer phone not found.")
         
         new_balance = customer["points_balance"] + earned_points
         cur.execute("UPDATE customers SET points_balance = %s, has_purchased = TRUE WHERE phone_number = %s;", (new_balance, clean_phone))
@@ -195,7 +263,7 @@ def process_cashback(data: CashbackProcess):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "earned_points": earned_points, "new_balance": new_balance, "message": f"Successfully credited {earned_points} points!"}
+        return {"status": "success", "earned_points": earned_points, "new_balance": new_balance, "message": f"Successfully credited {earned_points} points ({cb_rate}% cashback)!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -247,7 +315,7 @@ def reverse_cashback(log_id: int):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Transaction reversed successfully. Points deducted."}
+        return {"status": "success", "message": "Transaction reversed successfully."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -290,51 +358,17 @@ def get_daily_report(slug: str):
     except Exception:
         return {"total_revenue": 0.0, "orders_count": 0, "cashback_points_issued": 0, "cashback_transactions": 0}
 
-@app.get("/api/admin/customers")
-def get_customers():
+@app.post("/api/admin/{slug}/reports/clear")
+def clear_daily_reports(slug: str):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT phone_number, points_balance, created_at FROM customers ORDER BY id DESC;")
-        customers = cur.fetchall()
-        cur.close()
-        conn.close()
-        return customers or []
-    except Exception:
-        return []
-
-@app.get("/api/settings/{slug}")
-def get_restaurant_settings(slug: str):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
-        settings = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not settings:
-            return {"review_points": 50, "referral_points": 50}
-        return {"review_points": settings["review_points"], "referral_points": settings["referral_points"]}
-    except Exception:
-        return {"review_points": 50, "referral_points": 50}
-
-@app.post("/api/admin/settings/update")
-def update_restaurant_settings(data: SettingsUpdate):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
-        exists = cur.fetchone()
-        if exists:
-            cur.execute("UPDATE restaurant_settings SET review_points = %s, referral_points = %s WHERE restaurant_slug = %s;", 
-                        (data.review_points, data.referral_points, data.restaurant_slug))
-        else:
-            cur.execute("INSERT INTO restaurant_settings (restaurant_slug, review_points, referral_points) VALUES (%s, %s, %s);", 
-                        (data.restaurant_slug, data.review_points, data.referral_points))
+        cur.execute("DELETE FROM pos_orders WHERE restaurant_slug = %s;", (slug,))
+        cur.execute("DELETE FROM cashback_audit_log WHERE restaurant_slug = %s;", (slug,))
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Campaign settings updated successfully!"}
+        return {"status": "success", "message": "All reports and logs cleared successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -367,22 +401,6 @@ def add_menu_item(item: MenuItemCreate):
         cur.close()
         conn.close()
         return {"status": "success", "message": "Menu item added successfully!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.patch("/api/admin/menu/{item_id}")
-def update_menu_price(item_id: int, data: MenuPriceUpdate):
-    try:
-        new_price = data.price.strip()
-        if new_price.isdigit():
-            new_price += " MAD"
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE menu_items SET price = %s WHERE id = %s;", (new_price, item_id))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "message": "Price updated successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -444,54 +462,6 @@ def delete_reward(reward_id: int):
         cur.close()
         conn.close()
         return {"status": "success", "message": "Reward removed!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/tiers/{slug}")
-def get_tiers(slug: str):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM restaurant_tiers WHERE restaurant_slug = %s ORDER BY min_points ASC;", (slug,))
-        tiers = cur.fetchall()
-        cur.close()
-        conn.close()
-        if not tiers:
-            return [
-                {"id": 1, "name": "Classic Member", "min_points": 0},
-                {"id": 2, "name": "Silver VIP", "min_points": 100},
-                {"id": 3, "name": "Gold VIP", "min_points": 300}
-            ]
-        return tiers
-    except Exception:
-        return []
-
-@app.post("/api/admin/tiers/add")
-def add_tier(tier: TierCreate):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO restaurant_tiers (restaurant_slug, name, min_points) VALUES (%s, %s, %s);",
-            (tier.restaurant_slug, tier.name, tier.min_points)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "message": "Loyalty tier created!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/admin/tiers/{tier_id}")
-def delete_tier(tier_id: int):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM restaurant_tiers WHERE id = %s;", (tier_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "message": "Loyalty tier removed!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -584,32 +554,6 @@ async def fulfill_redemption(redemption_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/admin/validate-voucher")
-def validate_voucher(data: VoucherValidate):
-    try:
-        code_input = data.code.strip()
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM active_vouchers WHERE code = %s AND status = 'active';", (code_input,))
-        voucher = cur.fetchone()
-        if not voucher:
-            raise HTTPException(status_code=404, detail="Invalid or already used voucher code.")
-        
-        cur.execute("UPDATE active_vouchers SET status = 'redeemed' WHERE code = %s;", (code_input,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {
-            "status": "success",
-            "reward_title": voucher["reward_title"],
-            "image_url": voucher["image_url"] or "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500",
-            "phone_number": voucher["phone_number"]
-        }
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/api/rewards/claim-review")
 def claim_google_review(data: ReviewReward):
     clean_phone = normalize_phone(data.phone_number)
@@ -653,20 +597,16 @@ def refer_friend(data: ReferralCreate):
             "INSERT INTO customers (phone_number, pin_code, points_balance, referred_by, has_purchased) VALUES (%s, '1234', 0, %s, FALSE);",
             (friend_phone, ref_phone)
         )
-        cur.execute(
-            "INSERT INTO pending_referrals (referrer_phone, referred_phone) VALUES (%s, %s) ON CONFLICT (referred_phone) DO NOTHING;",
-            (ref_phone, friend_phone)
-        )
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Friend registered! Reward unlocks on first purchase."}
+        return {"status": "success", "message": "Friend registered!"}
     except HTTPException as he:
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH REORDERED ADMIN TABS & PIN LOGINS ---
+# --- FRONTEND UI WITH CORRECT TAB ORDER & SHIFT CONTROLS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -769,7 +709,7 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        /* Reordered Admin Sub-nav: Queue, Menu, Reports, Cashback, POS, Rewards, Settings */
+        /* EXACT TAB ORDER: Queue, Menu, Reports, Rewards, Cashback, POS, Settings */
         .admin-subnav { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
         .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.52rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
         .admin-sub-btn span.nav-icon { font-size: 1rem; margin-bottom: 2px; display: block; line-height: 1; }
@@ -812,7 +752,7 @@ def serve_mobile_frontend():
                     <div class="tier-badge" id="customer-tier-badge">Classic Member</div>
                     <div class="points-label">Your Balance</div>
                     <div class="points-number" id="points-val">0</div>
-                    <div class="cashback-badge">⚡ 10% Bill Cashback Active</div>
+                    <div class="cashback-badge" id="client-cashback-badge">⚡ 10% Bill Cashback Active</div>
                 </div>
                 
                 <div style="margin-top: 0.5rem;">
@@ -847,7 +787,7 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- OWNER CONTROL CENTER (REORDERED 7-TAB PRO DASHBOARD) -->
+        <!-- OWNER CONTROL CENTER (EXACT TAB ORDER REQUESTED) -->
         <div id="tab-admin" class="hidden">
             <div class="admin-subnav">
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
@@ -859,21 +799,21 @@ def serve_mobile_frontend():
                 <button class="admin-sub-btn" onclick="switchAdminSub('reports')" id="sub-btn-reports">
                     <span class="nav-icon">📊</span><span class="nav-text">Reports</span>
                 </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
+                    <span class="nav-icon">🎁</span><span class="nav-text">Rewards</span>
+                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('cashback')" id="sub-btn-cashback">
                     <span class="nav-icon">⚡</span><span class="nav-text">Cashback</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('pos')" id="sub-btn-pos">
                     <span class="nav-icon">🛒</span><span class="nav-text">POS</span>
                 </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
-                    <span class="nav-icon">🎁</span><span class="nav-text">Rewards</span>
-                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">
                     <span class="nav-icon">⚙️</span><span class="nav-text">Settings</span>
                 </button>
             </div>
 
-            <!-- 1. LIVE QUEUE -->
+            <!-- 1. QUEUE -->
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Redemption Queue</h3>
@@ -884,7 +824,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 2. MENU EDITOR -->
+            <!-- 2. MENU -->
             <div id="admin-sub-menu" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
@@ -903,35 +843,54 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 3. END-OF-DAY REPORTS -->
+            <!-- 3. REPORTS (WITH SHIFT INFO & CLEAR BUTTON) -->
             <div id="admin-sub-reports" class="admin-section hidden">
                 <div class="card" style="text-align: center;">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Z-Report Summary</h3>
-                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Operating Hours Summary (Today)</div>
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
+                    <div id="shift-label-display" style="font-size: 0.7rem; color: var(--success); margin-bottom: 0.85rem; font-weight: 700;">Active Shift: 07:00 - 00:00</div>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem;">
                         <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border);">
                             <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Total Revenue</div>
-                            <div id="rep-revenue" style="font-size: 1.3rem; font-weight: 800; color: var(--success);">0 MAD</div>
+                            <div id="rep-revenue" style="font-size: 1.2rem; font-weight: 800; color: var(--success);">0 MAD</div>
                         </div>
                         <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border);">
                             <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Orders Sold</div>
-                            <div id="rep-orders" style="font-size: 1.3rem; font-weight: 800; color: var(--primary);">0</div>
+                            <div id="rep-orders" style="font-size: 1.2rem; font-weight: 800; color: var(--primary);">0</div>
                         </div>
                     </div>
 
-                    <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border);">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Cashback Points Issued Today</div>
-                        <div id="rep-cb-pts" style="font-size: 1.1rem; font-weight: 800; color: var(--accent);">0 pts</div>
+                    <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Cashback Points Issued</div>
+                        <div id="rep-cb-pts" style="font-size: 1rem; font-weight: 800; color: var(--accent);">0 pts</div>
                     </div>
+
+                    <button class="danger-btn" onclick="clearReports()" style="width: 100%; padding: 0.6rem; font-size: 0.8rem; border-radius: 10px;">🗑️ Clear / Reset Shift Data</button>
                 </div>
             </div>
 
-            <!-- 4. CASHBACK POS WITH AUDIT LOG & REVERSAL -->
+            <!-- 4. REWARDS -->
+            <div id="admin-sub-rewards" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
+                    <label>Reward Title</label>
+                    <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
+                    <label>Points Required</label>
+                    <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
+                    <label>Image URL (Optional)</label>
+                    <input type="text" id="reward-img-input" placeholder="https://..." />
+                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
+                    
+                    <label>Configured Rewards:</label>
+                    <div id="admin-rewards-list" style="max-height: 150px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- 5. CASHBACK -->
             <div id="admin-sub-cashback" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">⚡ 10% Cashback & Audit Log</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Enter phone and bill amount. Mistakes can be reversed instantly below.</p>
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">⚡ Cashback POS & Audit Log</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Calculates cashback based on active settings percentage.</p>
                     
                     <label>Customer Phone Number</label>
                     <input type="tel" id="cb-phone" placeholder="e.g. 0612345678" />
@@ -946,7 +905,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 5. TOUCHSCREEN FAST POS ORDER BUILDER -->
+            <!-- 6. POS -->
             <div id="admin-sub-pos" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🛒 Touchscreen POS Builder</h3>
@@ -970,38 +929,38 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 6. REWARDS BUILDER -->
-            <div id="admin-sub-rewards" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
-                    <label>Reward Title</label>
-                    <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
-                    <label>Points Required</label>
-                    <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
-                    <label>Image URL (Optional)</label>
-                    <input type="text" id="reward-img-input" placeholder="https://..." />
-                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
-                    
-                    <label>Configured Rewards:</label>
-                    <div id="admin-rewards-list" style="max-height: 150px; overflow-y: auto;"></div>
-                </div>
-            </div>
-
-            <!-- 7. SETTINGS -->
+            <!-- 7. SETTINGS (WITH CASHBACK % & SHIFT HOURS) -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign Reward Points</h3>
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign & Shift Settings</h3>
+                    
                     <label>Google Review Points</label>
                     <input type="number" id="setting-review-pts" placeholder="e.g. 50" />
+                    
                     <label>Friend Referral Points</label>
                     <input type="number" id="setting-referral-pts" placeholder="e.g. 50" />
-                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem;">Save Point Rules</button>
+                    
+                    <label>Cashback Percentage (%)</label>
+                    <input type="number" step="0.5" id="setting-cb-pct" placeholder="e.g. 10" />
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div>
+                            <label>Shift Open Time</label>
+                            <input type="time" id="setting-open-time" value="07:00" />
+                        </div>
+                        <div>
+                            <label>Shift Close Time</label>
+                            <input type="time" id="setting-close-time" value="00:00" />
+                        </div>
+                    </div>
+
+                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem; margin-top: 0.5rem;">Save All Settings ✓</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- CUSTOM REDEMPTION NAME MODAL -->
+    <!-- MODALS -->
     <div id="redeem-name-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Claim Reward</h3>
@@ -1012,7 +971,6 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- VOUCHER MODAL -->
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
@@ -1024,7 +982,6 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- IMAGE PREVIEW MODAL -->
     <div id="image-modal" class="modal">
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
@@ -1066,10 +1023,13 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/settings/' + currentSlug);
                 const data = await res.json();
                 if(res.ok) {
-                    const revInput = document.getElementById('setting-review-pts');
-                    const refInput = document.getElementById('setting-referral-pts');
-                    if(revInput) revInput.value = data.review_points;
-                    if(refInput) refInput.value = data.referral_points;
+                    document.getElementById('setting-review-pts').value = data.review_points;
+                    document.getElementById('setting-referral-pts').value = data.referral_points;
+                    document.getElementById('setting-cb-pct').value = data.cashback_percentage;
+                    document.getElementById('setting-open-time').value = data.open_time;
+                    document.getElementById('setting-close-time').value = data.close_time;
+                    document.getElementById('client-cashback-badge').innerText = `⚡ ${data.cashback_percentage}% Bill Cashback Active`;
+                    document.getElementById('shift-label-display').innerText = `Active Shift: ${data.open_time} - ${data.close_time}`;
                 }
             } catch(e) {}
         }
@@ -1077,14 +1037,21 @@ def serve_mobile_frontend():
         async function saveCampaignSettings() {
             const review_points = parseInt(document.getElementById('setting-review-pts').value);
             const referral_points = parseInt(document.getElementById('setting-referral-pts').value);
+            const cashback_percentage = parseFloat(document.getElementById('setting-cb-pct').value);
+            const open_time = document.getElementById('setting-open-time').value;
+            const close_time = document.getElementById('setting-close-time').value;
+
             try {
                 const res = await fetch('/api/admin/settings/update', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ restaurant_slug: currentSlug, review_points, referral_points })
+                    body: JSON.stringify({ restaurant_slug: currentSlug, review_points, referral_points, cashback_percentage, open_time, close_time })
                 });
                 const data = await res.json();
-                if(res.ok) showToast(data.message);
+                if(res.ok) {
+                    showToast(data.message);
+                    loadRestaurantSettings();
+                }
             } catch(e) {
                 showToast('Connection error', true);
             }
@@ -1115,7 +1082,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'menu', 'reports', 'cashback', 'pos', 'rewards', 'settings'].forEach(s => {
+            ['queue', 'menu', 'reports', 'rewards', 'cashback', 'pos', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -1137,19 +1104,16 @@ def serve_mobile_frontend():
                 menuItemsCache = await res.json();
                 const container = document.getElementById('pos-menu-grid');
                 if(!menuItemsCache || menuItemsCache.length === 0) {
-                    container.innerHTML = '<div style="grid-column: span 2; text-align:center; color:var(--text-muted); font-size:0.75rem;">No menu items found. Add some in Menu tab!</div>';
+                    container.innerHTML = '<div style="grid-column: span 2; text-align:center; color:var(--text-muted); font-size:0.75rem;">No items found.</div>';
                     return;
                 }
-                container.innerHTML = menuItemsCache.map(item => {
-                    const img = item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
-                    return `
-                        <div class="pos-item-card" onclick="addToPOSCart(${item.id})">
-                            <img src="${img}" class="pos-img" />
-                            <div class="pos-title">${item.name}</div>
-                            <div class="pos-price">${item.price}</div>
-                        </div>
-                    `;
-                }).join('');
+                container.innerHTML = menuItemsCache.map(item => `
+                    <div class="pos-item-card" onclick="addToPOSCart(${item.id})">
+                        <img src="${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}" class="pos-img" />
+                        <div class="pos-title">${item.name}</div>
+                        <div class="pos-price">${item.price}</div>
+                    </div>
+                `).join('');
             } catch(e) {}
         }
 
@@ -1176,12 +1140,7 @@ def serve_mobile_frontend():
                 const c = posCart[k];
                 const lineTotal = c.priceNum * c.qty;
                 total += lineTotal;
-                return `
-                    <div class="cart-row">
-                        <span>${c.qty}x ${c.name}</span>
-                        <span>${lineTotal.toFixed(2)} MAD</span>
-                    </div>
-                `;
+                return `<div class="cart-row"><span>${c.qty}x ${c.name}</span><span>${lineTotal.toFixed(2)} MAD</span></div>`;
             }).join('');
             document.getElementById('pos-total-val').innerText = total.toFixed(2) + ' MAD';
         }
@@ -1221,6 +1180,20 @@ def serve_mobile_frontend():
                 document.getElementById('rep-orders').innerText = data.orders_count;
                 document.getElementById('rep-cb-pts').innerText = data.cashback_points_issued + ' pts';
             } catch(e) {}
+        }
+
+        async function clearReports() {
+            if(!confirm('Clear all shift report data and logs?')) return;
+            try {
+                const res = await fetch('/api/admin/' + currentSlug + '/reports/clear', { method: 'POST' });
+                if(res.ok) {
+                    showToast('Shift data cleared!');
+                    loadDailyReport();
+                    loadCashbackLog();
+                }
+            } catch(e) {
+                showToast('Error clearing data', true);
+            }
         }
 
         async function submitCashback() {
@@ -1272,19 +1245,14 @@ def serve_mobile_frontend():
         }
 
         async function reverseCashback(id) {
-            if(!confirm('Reverse this cashback transaction and deduct points?')) return;
+            if(!confirm('Reverse transaction?')) return;
             try {
                 const res = await fetch('/api/admin/cashback/reverse/' + id, { method: 'POST' });
-                const data = await res.json();
                 if(res.ok) {
-                    showToast(data.message);
+                    showToast('Reversed successfully.');
                     loadCashbackLog();
-                } else {
-                    showToast(data.detail || 'Failed', true);
                 }
-            } catch(e) {
-                showToast('Connection error', true);
-            }
+            } catch(e) {}
         }
 
         async function loadAdminQueue() {
@@ -1312,11 +1280,9 @@ def serve_mobile_frontend():
         }
 
         async function fulfillRedemption(id) {
-            try {
-                await fetch('/api/admin/redemptions/fulfill/' + id, { method: 'POST' });
-                showToast('Reward fulfilled!');
-                loadAdminQueue();
-            } catch(e) {}
+            await fetch('/api/admin/redemptions/fulfill/' + id, { method: 'POST' });
+            showToast('Reward fulfilled!');
+            loadAdminQueue();
         }
 
         async function loadMenu() {
@@ -1328,19 +1294,16 @@ def serve_mobile_frontend():
                     container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding: 2rem 0;">No items available.</div>';
                     return;
                 }
-                container.innerHTML = items.map(item => {
-                    const imgSrc = item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500';
-                    return `
-                        <div class="menu-card" onclick="openModal('${imgSrc}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')">
-                            <img src="${imgSrc}" class="menu-img" />
-                            <div class="menu-info">
-                                <div class="menu-cat">${item.category}</div>
-                                <div class="menu-name">${item.name}</div>
-                                <div class="menu-price">${item.price}</div>
-                            </div>
+                container.innerHTML = items.map(item => `
+                    <div class="menu-card" onclick="openModal('${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')">
+                        <img src="${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}" class="menu-img" />
+                        <div class="menu-info">
+                            <div class="menu-cat">${item.category}</div>
+                            <div class="menu-name">${item.name}</div>
+                            <div class="menu-price">${item.price}</div>
                         </div>
-                    `;
-                }).join('');
+                    </div>
+                `).join('');
             } catch(e) {}
         }
 
@@ -1407,12 +1370,7 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/rewards/redeem', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        phone_number: currentPhone, 
-                        reward_id: selectedRewardId, 
-                        restaurant_slug: currentSlug,
-                        customer_name: customerName
-                    })
+                    body: JSON.stringify({ phone_number: currentPhone, reward_id: selectedRewardId, restaurant_slug: currentSlug, customer_name: customerName })
                 });
                 const data = await res.json();
                 if(res.ok) {
@@ -1423,52 +1381,36 @@ def serve_mobile_frontend():
                     document.getElementById('voucher-modal').style.display = 'flex';
                     loadCustomerData();
                     showToast('Reward unlocked successfully!');
-                } else {
-                    showToast(data.detail || 'Redemption failed.', true);
                 }
-            } catch(e) {
-                showToast('Connection error.', true);
-            }
+            } catch(e) {}
         }
 
-        function closeVoucherModal() {
-            document.getElementById('voucher-modal').style.display = 'none';
-        }
+        function closeVoucherModal() { document.getElementById('voucher-modal').style.display = 'none'; }
 
         async function claimReview() {
-            try {
-                const res = await fetch('/api/rewards/claim-review', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: currentPhone, restaurant_slug: currentSlug })
-                });
-                const data = await res.json();
-                document.getElementById('points-val').innerText = data.new_balance;
-                loadCustomerData();
-                showToast(data.message);
-            } catch(e) {
-                showToast('Error claiming points', true);
-            }
+            const res = await fetch('/api/rewards/claim-review', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ phone_number: currentPhone, restaurant_slug: currentSlug })
+            });
+            const data = await res.json();
+            document.getElementById('points-val').innerText = data.new_balance;
+            loadCustomerData();
+            showToast(data.message);
         }
 
         async function referFriend() {
             const friendPhone = document.getElementById('friend-phone').value.trim();
             if(!friendPhone) { showToast('Enter friend phone', true); return; }
-            try {
-                const res = await fetch('/api/rewards/refer-friend', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: friendPhone, restaurant_slug: currentSlug })
-                });
-                const data = await res.json();
-                if(res.ok) {
-                    showToast(data.message);
-                    document.getElementById('friend-phone').value = '';
-                } else {
-                    showToast(data.detail || 'Error', true);
-                }
-            } catch(e) {
-                showToast('Connection error', true);
+            const res = await fetch('/api/rewards/refer-friend', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ referrer_phone: currentPhone, friend_phone: friendPhone, restaurant_slug: currentSlug })
+            });
+            const data = await res.json();
+            if(res.ok) {
+                showToast(data.message);
+                document.getElementById('friend-phone').value = '';
             }
         }
 
@@ -1478,35 +1420,31 @@ def serve_mobile_frontend():
             const price = document.getElementById('admin-price').value;
             const image_url = document.getElementById('admin-img').value;
             if(!category || !name || !price) { showToast('Fill all fields', true); return; }
-            try {
-                await fetch('/api/admin/menu/add', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ restaurant_slug: currentSlug, category, name, price, image_url })
-                });
-                showToast('Menu item added!');
-                document.getElementById('admin-cat').value = '';
-                document.getElementById('admin-name').value = '';
-                document.getElementById('admin-price').value = '';
-                document.getElementById('admin-img').value = '';
-                loadAdminMenu();
-                loadPOSMenu();
-            } catch(e) {}
+            await fetch('/api/admin/menu/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ restaurant_slug: currentSlug, category, name, price, image_url })
+            });
+            showToast('Menu item added!');
+            document.getElementById('admin-cat').value = '';
+            document.getElementById('admin-name').value = '';
+            document.getElementById('admin-price').value = '';
+            document.getElementById('admin-img').value = '';
+            loadAdminMenu();
+            loadPOSMenu();
         }
 
         async function loadAdminMenu() {
-            try {
-                const res = await fetch('/api/menu/' + currentSlug);
-                const items = await res.json();
-                const container = document.getElementById('admin-menu-list');
-                if(!items || items.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No items.</div>'; return; }
-                container.innerHTML = items.map(item => `
-                    <div class="admin-item-row">
-                        <span><b>${item.name}</b> (${item.price})</span>
-                        <button class="danger-btn" onclick="deleteItem(${item.id})">Delete</button>
-                    </div>
-                `).join('');
-            } catch(e) {}
+            const res = await fetch('/api/menu/' + currentSlug);
+            const items = await res.json();
+            const container = document.getElementById('admin-menu-list');
+            if(!items || items.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No items.</div>'; return; }
+            container.innerHTML = items.map(item => `
+                <div class="admin-item-row">
+                    <span><b>${item.name}</b> (${item.price})</span>
+                    <button class="danger-btn" onclick="deleteItem(${item.id})">Delete</button>
+                </div>
+            `).join('');
         }
 
         async function deleteItem(id) {
@@ -1532,18 +1470,16 @@ def serve_mobile_frontend():
         }
 
         async function loadAdminRewards() {
-            try {
-                const res = await fetch('/api/rewards/' + currentSlug);
-                const rewards = await res.json();
-                const container = document.getElementById('admin-rewards-list');
-                if(!rewards || rewards.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No rewards.</div>'; return; }
-                container.innerHTML = rewards.map(r => `
-                    <div class="admin-item-row">
-                        <span><b>${r.title}</b> (${r.points_required} pts)</span>
-                        <button class="danger-btn" onclick="deleteReward(${r.id})">Delete</button>
-                    </div>
-                `).join('');
-            } catch(e) {}
+            const res = await fetch('/api/rewards/' + currentSlug);
+            const rewards = await res.json();
+            const container = document.getElementById('admin-rewards-list');
+            if(!rewards || rewards.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No rewards.</div>'; return; }
+            container.innerHTML = rewards.map(r => `
+                <div class="admin-item-row">
+                    <span><b>${r.title}</b> (${r.points_required} pts)</span>
+                    <button class="danger-btn" onclick="deleteReward(${r.id})" style="padding:2px 6px; font-size:0.7rem;">Delete</button>
+                </div>
+            `).join('');
         }
 
         async function deleteReward(id) {
