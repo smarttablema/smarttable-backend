@@ -12,19 +12,18 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.3.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.4.0")
 
 @app.on_event("startup")
 def startup_db():
     conn = get_db_connection()
     cur = conn.cursor()
-    # Enhanced Customers Table with password & recovery pin
     cur.execute("""
         CREATE TABLE IF NOT EXISTS customers (
             id SERIAL PRIMARY KEY,
             phone_number VARCHAR(20) UNIQUE,
-            password VARCHAR(100) DEFAULT 'password123',
-            recovery_pin VARCHAR(10) DEFAULT '1234',
+            password VARCHAR(100),
+            recovery_pin VARCHAR(10),
             points_balance INT DEFAULT 0,
             has_purchased BOOLEAN DEFAULT FALSE,
             referred_by VARCHAR(20),
@@ -32,12 +31,11 @@ def startup_db():
         );
     """)
     try:
-        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'password123';")
-        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS recovery_pin VARCHAR(10) DEFAULT '1234';")
+        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS password VARCHAR(100);")
+        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS recovery_pin VARCHAR(10);")
     except Exception:
         conn.rollback()
 
-    # Owner Admin Table for secure login
     cur.execute("""
         CREATE TABLE IF NOT EXISTS owner_admin (
             id SERIAL PRIMARY KEY,
@@ -46,7 +44,6 @@ def startup_db():
             recovery_pin VARCHAR(10)
         );
     """)
-    # Insert default owner admin if not exists
     cur.execute("INSERT INTO owner_admin (username, password, recovery_pin) VALUES ('admin', 'admin123', '9999') ON CONFLICT (username) DO NOTHING;")
 
     cur.execute("""
@@ -111,10 +108,15 @@ def startup_db():
 def normalize_phone(phone: str) -> str:
     return re.sub(r'[\s\-\(\)]', '', phone.strip())
 
-class CustomerAuth(BaseModel):
+class CustomerRegister(BaseModel):
     phone_number: str
-    password: str = "password123"
-    recovery_pin: str = "1234"
+    password: str
+    recovery_pin: str
+    restaurant_slug: str = "default-restaurant"
+
+class CustomerLogin(BaseModel):
+    phone_number: str
+    password: str
     restaurant_slug: str = "default-restaurant"
 
 class AdminLogin(BaseModel):
@@ -147,9 +149,6 @@ class MenuItemCreate(BaseModel):
     price: str
     image_url: str = ""
 
-class MenuPriceUpdate(BaseModel):
-    price: str
-
 class RewardCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
     title: str
@@ -164,45 +163,63 @@ class SettingsUpdate(BaseModel):
     open_time: str
     close_time: str
 
-class VoucherValidate(BaseModel):
-    code: str
-
 @app.get("/api/health")
 def health_check():
     return {"status": "online", "database": "neon-postgres", "brand": "smarttable.ma"}
 
-@app.post("/api/customer/auth")
-def authenticate_customer(data: CustomerAuth):
+@app.post("/api/customer/register")
+def register_customer(data: CustomerRegister):
     clean_phone = normalize_phone(data.phone_number)
-    pwd = data.password.strip() if data.password else "password123"
-    pin = data.recovery_pin.strip() if data.recovery_pin else "1234"
+    pwd = data.password.strip()
+    pin = data.recovery_pin.strip()
     
     if not re.match(r'^\+?\d{8,15}$', clean_phone):
         raise HTTPException(status_code=400, detail="Invalid phone number format.")
+    if len(pwd) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(status_code=400, detail="Recovery PIN must be exactly 4 digits.")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="An account with this phone number already exists.")
+        
+        cur.execute(
+            "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, has_purchased) VALUES (%s, %s, %s, 0, FALSE) RETURNING *;",
+            (clean_phone, pwd, pin)
+        )
+        customer = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "points_balance": customer["points_balance"], "message": "Account registered successfully!"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/customer/login")
+def login_customer(data: CustomerLogin):
+    clean_phone = normalize_phone(data.phone_number)
+    pwd = data.password.strip()
+    
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
         customer = cur.fetchone()
-        
-        if not customer:
-            # Register new customer with password and recovery PIN
-            cur.execute(
-                "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, has_purchased) VALUES (%s, %s, %s, 0, FALSE) RETURNING *;",
-                (clean_phone, pwd, pin)
-            )
-            customer = cur.fetchone()
-            conn.commit()
-        else:
-            # If logging in, check password or allow recovery PIN override if password forgot
-            stored_pwd = customer.get("password") or "password123"
-            stored_pin = customer.get("recovery_pin") or "1234"
-            
-            if stored_pwd != pwd and stored_pin != pin:
-                raise HTTPException(status_code=401, detail="Incorrect password or recovery PIN.")
-
         cur.close()
         conn.close()
+
+        if not customer:
+            raise HTTPException(status_code=404, detail="Account not found. Please register first.")
+        
+        if customer.get("password") != pwd:
+            raise HTTPException(status_code=401, detail="Incorrect password. Use recovery PIN if forgotten.")
+
         return {"status": "success", "points_balance": customer["points_balance"]}
     except HTTPException as he:
         raise he
@@ -629,7 +646,7 @@ def refer_friend(data: ReferralCreate):
             raise HTTPException(status_code=400, detail="This friend already has an account.")
         
         cur.execute(
-            "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, referred_by, has_purchased) VALUES (%s, 'password123', '1234', 0, %s, FALSE);",
+            "INSERT INTO customers (phone_number, password, recovery_pin, points_balance, referred_by, has_purchased) VALUES (%s, 'default123', '1234', 0, %s, FALSE);",
             (friend_phone, ref_phone)
         )
         conn.commit()
@@ -641,7 +658,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL MODALS & 3-TIER AUTH ---
+# --- FRONTEND UI WITH SEPARATE CUSTOMER REGISTER / SIGN IN & OWNER GATE ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -727,9 +744,8 @@ def serve_mobile_frontend():
         .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
-        /* Professional Modals */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
-        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 380px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .modal-img { width: 100%; height: 160px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
         .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; margin-top: 0.5rem; }
@@ -754,23 +770,27 @@ def serve_mobile_frontend():
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
         .redemption-card { background: var(--bg-deep); border-left: 4px solid var(--accent); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
         .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
+        
+        .auth-sub-toggle { display: flex; gap: 8px; margin-bottom: 1rem; }
+        .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
     </style>
 </head>
 <body>
     <div id="toast-banner">✓ Action completed successfully!</div>
 
     <!-- OWNER ADMIN LOGIN GATE -->
-    <div id="admin-login-modal" class="modal" style="display: flex;">
-        <div class="modal-content" style="max-width: 380px;">
+    <div id="admin-login-modal" class="modal" style="display: none;">
+        <div class="modal-content">
             <div class="logo" style="margin-bottom: 0.5rem;">SmartTable<span>.ma</span></div>
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Owner Control Center</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter owner credentials to access POS & reports</p>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter manager username (admin) & password</p>
             
             <label>Username</label>
-            <input type="text" id="owner-user" placeholder="e.g. admin" />
+            <input type="text" id="owner-user" placeholder="admin" value="admin" />
             
             <label>Password</label>
-            <input type="password" id="owner-pass" placeholder="••••••••" />
+            <input type="password" id="owner-pass" placeholder="admin123" />
             
             <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.5rem;">Authorize & Open Dashboard</button>
         </div>
@@ -788,17 +808,35 @@ def serve_mobile_frontend():
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
         </div>
 
-        <!-- CLIENT: REWARDS TAB WITH PHONE, PASSWORD & RECOVERY PIN -->
+        <!-- CLIENT: REWARDS TAB WITH SIGN IN / REGISTER TABS -->
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
-                <h3 style="margin-bottom: 0.85rem; font-size: 1rem; font-weight: 700;">Customer Portal</h3>
-                <label>Phone Number</label>
-                <input type="tel" id="phone-input" placeholder="e.g., 0612345678" />
-                <label>Password</label>
-                <input type="password" id="password-input" placeholder="Your account password" />
-                <label>Recovery PIN (4-Digits for Reset)</label>
-                <input type="password" id="recovery-pin-input" placeholder="e.g., 1234" maxlength="4" />
-                <button class="btn-main" onclick="loginCustomer()">Access / Register Account</button>
+                <div class="auth-sub-toggle">
+                    <button class="auth-toggle-btn active" id="btn-toggle-signin" onclick="switchAuthMode('signin')">Sign In</button>
+                    <button class="auth-toggle-btn" id="btn-toggle-register" onclick="switchAuthMode('register')">Register Account</button>
+                </div>
+
+                <!-- SIGN IN FORM -->
+                <div id="form-signin">
+                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700;">Customer Sign In</h3>
+                    <label>Phone Number</label>
+                    <input type="tel" id="signin-phone" placeholder="e.g., 0612345678" />
+                    <label>Password</label>
+                    <input type="password" id="signin-password" placeholder="Your password" />
+                    <button class="btn-main" onclick="loginCustomer()">Sign In to Account</button>
+                </div>
+
+                <!-- REGISTER FORM -->
+                <div id="form-register" class="hidden">
+                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">Create New Account</h3>
+                    <label>Phone Number</label>
+                    <input type="tel" id="reg-phone" placeholder="e.g., 0612345678" />
+                    <label>Password</label>
+                    <input type="password" id="reg-password" placeholder="Create a password" />
+                    <label>Recovery PIN (4-Digits for Reset)</label>
+                    <input type="password" id="reg-pin" placeholder="e.g., 1234" maxlength="4" />
+                    <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16;">Register & Create Account</button>
+                </div>
             </div>
             
             <div id="dashboard-section" class="card hidden">
@@ -897,7 +935,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 3. REPORTS WITH PROFESSIONAL MODAL CLEAR TRIGGER -->
+            <!-- 3. REPORTS -->
             <div id="admin-sub-reports" class="admin-section hidden">
                 <div class="card" style="text-align: center;">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
@@ -1014,7 +1052,7 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- PROFESSIONAL CONFIRMATION MODAL FOR CLEARING REPORTS -->
+    <!-- MODALS -->
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
@@ -1024,7 +1062,6 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- OTHER MODALS -->
     <div id="redeem-name-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Claim Reward</h3>
@@ -1066,12 +1103,25 @@ def serve_mobile_frontend():
             loadRestaurantSettings();
             const urlParams = new URLSearchParams(window.location.search);
             if(urlParams.get('mode') === 'admin') {
-                // Show admin login modal first
                 document.getElementById('admin-login-modal').style.display = 'flex';
             } else {
                 loadMenu();
             }
         };
+
+        function switchAuthMode(mode) {
+            if(mode === 'signin') {
+                document.getElementById('btn-toggle-signin').classList.add('active');
+                document.getElementById('btn-toggle-register').classList.remove('active');
+                document.getElementById('form-signin').classList.remove('hidden');
+                document.getElementById('form-register').classList.add('hidden');
+            } else {
+                document.getElementById('btn-toggle-register').classList.add('active');
+                document.getElementById('btn-toggle-signin').classList.remove('active');
+                document.getElementById('form-register').classList.remove('hidden');
+                document.getElementById('form-signin').classList.add('hidden');
+            }
+        }
 
         async function loginOwner() {
             const user = document.getElementById('owner-user').value.trim();
@@ -1100,6 +1150,59 @@ def serve_mobile_frontend():
                     showToast('Owner authorized successfully!');
                 } else {
                     showToast(data.detail || 'Invalid login', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
+        async function registerCustomer() {
+            const phone = document.getElementById('reg-phone').value.trim();
+            const password = document.getElementById('reg-password').value.trim();
+            const pin = document.getElementById('reg-pin').value.trim();
+            if(!phone || !password || !pin) { showToast('Fill all registration fields', true); return; }
+            try {
+                const res = await fetch('/api/customer/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: phone, password: password, recovery_pin: pin, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast('Account registered successfully! Now sign in.');
+                    switchAuthMode('signin');
+                    document.getElementById('signin-phone').value = phone;
+                    document.getElementById('reg-phone').value = '';
+                    document.getElementById('reg-password').value = '';
+                    document.getElementById('reg-pin').value = '';
+                } else {
+                    showToast(data.detail || 'Registration failed', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
+        async function loginCustomer() {
+            const phone = document.getElementById('signin-phone').value.trim();
+            const password = document.getElementById('signin-password').value.trim();
+            if(!phone || !password) { showToast('Enter phone and password', true); return; }
+            currentPhone = phone;
+            try {
+                const res = await fetch('/api/customer/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: phone, password: password, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('points-val').innerText = data.points_balance;
+                    document.getElementById('login-section').classList.add('hidden');
+                    document.getElementById('dashboard-section').classList.remove('hidden');
+                    loadCustomerData();
+                    showToast('Welcome back!');
+                } else {
+                    showToast(data.detail || 'Login failed', true);
                 }
             } catch(e) {
                 showToast('Connection error', true);
@@ -1397,33 +1500,6 @@ def serve_mobile_frontend():
                     </div>
                 `).join('');
             } catch(e) {}
-        }
-
-        async function loginCustomer() {
-            const phone = document.getElementById('phone-input').value.trim();
-            const password = document.getElementById('password-input').value.trim();
-            const recoveryPin = document.getElementById('recovery-pin-input').value.trim();
-            if(!phone || !password || !recoveryPin) { showToast('Please enter phone, password, and recovery PIN', true); return; }
-            currentPhone = phone;
-            try {
-                const res = await fetch('/api/customer/auth', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone, password: password, recovery_pin: recoveryPin, restaurant_slug: currentSlug })
-                });
-                const data = await res.json();
-                if(res.ok) {
-                    document.getElementById('points-val').innerText = data.points_balance;
-                    document.getElementById('login-section').classList.add('hidden');
-                    document.getElementById('dashboard-section').classList.remove('hidden');
-                    loadCustomerData();
-                    showToast('Welcome!');
-                } else {
-                    showToast(data.detail || 'Login failed', true);
-                }
-            } catch(e) {
-                showToast('Connection error', true);
-            }
         }
 
         async function loadCustomerData() {
