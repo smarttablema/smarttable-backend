@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.0.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.2.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -473,13 +473,11 @@ def create_pos_order(data: POSOrderCreate):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # 1. Log order to Z-report revenue table
         cur.execute(
             "INSERT INTO pos_orders (restaurant_slug, items_summary, total_amount) VALUES (%s, %s, %s);",
             (data.restaurant_slug, data.items_summary, data.total_amount)
         )
 
-        # 2. Automatically push order to live redemption queue for owner notification
         cur.execute(
             """INSERT INTO redemption_queue 
                (restaurant_slug, table_number, customer_name, customer_phone, reward_item, security_pin, status) 
@@ -487,7 +485,6 @@ def create_pos_order(data: POSOrderCreate):
             (data.restaurant_slug, str(data.table_number), "App Guest", data.customer_phone or "Walk-in", f"ORDER: {data.items_summary} ({data.total_amount:.2f} MAD)", "APP")
         )
 
-        # 3. Automatically process cashback if customer phone is logged in
         if data.customer_phone:
             cur.execute("SELECT cashback_percentage FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
             s = cur.fetchone()
@@ -780,7 +777,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH AUTOMATED APP ORDERING CART & TABLE SELECTION ---
+# --- FRONTEND UI WITH NFC URL TABLE PARAMETER LOCKING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -858,7 +855,7 @@ def serve_mobile_frontend():
         .cart-box { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 0.85rem; max-height: 120px; overflow-y: auto; font-size: 0.8rem; }
         .cart-row { display: flex; justify-content: space-between; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 2px; }
 
-        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 280px; overflow-y: auto; padding-right: 2px; margin-bottom: 1rem; }
+        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 260px; overflow-y: auto; padding-right: 2px; margin-bottom: 1rem; }
         .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; transition: border-color 0.2s; }
         .menu-card:hover { border-color: var(--accent); }
         .menu-img { width: 50px; height: 50px; border-radius: 10px; object-fit: cover; background: var(--surface); }
@@ -905,6 +902,8 @@ def serve_mobile_frontend():
         .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
         .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+        
+        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
     </style>
 </head>
 <body>
@@ -1020,21 +1019,16 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- CLIENT: MENU & AUTOMATED ORDERING TAB -->
+        <!-- CLIENT: MENU & NFC AUTOMATED ORDERING TAB -->
         <div id="tab-menu" class="client-view hidden">
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
                     <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">📖 Interactive Menu & Order</h3>
-                    <div style="width: 110px;">
-                        <label style="font-size: 0.6rem; margin-bottom: 2px;">Table #</label>
-                        <select id="app-table-num" style="padding: 4px 8px; font-size: 0.8rem; margin-bottom: 0;">
-                            <option value="1">Table 1</option>
-                            <option value="2">Table 2</option>
-                            <option value="3">Table 3</option>
-                            <option value="4">Table 4</option>
-                            <option value="VIP">VIP Table</option>
-                        </select>
-                    </div>
+                </div>
+
+                <!-- NFC Locked Table Banner or Dropdown -->
+                <div id="table-selection-container">
+                    <!-- Populated dynamically via JS based on URL param -->
                 </div>
 
                 <div id="menu-container" class="menu-grid">
@@ -1085,7 +1079,7 @@ def serve_mobile_frontend():
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Orders & Redemptions Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Real-time orders placed from app & reward redemptions</p>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Real-time NFC table orders & redemptions</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
                     </div>
@@ -1297,10 +1291,37 @@ def serve_mobile_frontend():
         let posCart = {};
         let appCart = {};
         let menuItemsCache = [];
+        let lockedTableNumber = '1';
         
         window.onload = function() {
             loadRestaurantSettings();
+            
+            // Read NFC / QR Table URL Parameter (e.g. ?table=3)
             const urlParams = new URLSearchParams(window.location.search);
+            const tableParam = urlParams.get('table');
+            const tableContainer = document.getElementById('table-selection-container');
+            
+            if(tableParam) {
+                lockedTableNumber = tableParam.trim();
+                tableContainer.innerHTML = `
+                    <div class="table-badge-locked">
+                        <span>📍 NFC Scanned Table:</span>
+                        <span style="font-size: 0.95rem; font-weight: 800; color: white; background: var(--primary); padding: 2px 10px; border-radius: 6px;">Table ${lockedTableNumber}</span>
+                    </div>
+                `;
+            } else {
+                tableContainer.innerHTML = `
+                    <label>Select Your Table #</label>
+                    <select id="app-table-num" style="padding: 8px; font-size: 0.85rem; margin-bottom: 0.85rem;">
+                        <option value="1">Table 1</option>
+                        <option value="2">Table 2</option>
+                        <option value="3">Table 3</option>
+                        <option value="4">Table 4</option>
+                        <option value="VIP">VIP Table</option>
+                    </select>
+                `;
+            }
+
             if(urlParams.get('mode') === 'admin') {
                 document.getElementById('admin-login-modal').style.display = 'flex';
             } else {
@@ -1639,7 +1660,10 @@ def serve_mobile_frontend():
         async function submitAppOrder() {
             const keys = Object.keys(appCart);
             if(keys.length === 0) { showToast('Your order cart is empty!', true); return; }
-            const tableNum = document.getElementById('app-table-num').value;
+            
+            const tableSelect = document.getElementById('app-table-num');
+            const tableNum = tableSelect ? tableSelect.value : lockedTableNumber;
+
             let summaryParts = [];
             let total = 0;
             keys.forEach(k => {
@@ -1662,7 +1686,7 @@ def serve_mobile_frontend():
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    showToast('🎉 Order placed successfully! Sent to kitchen.');
+                    showToast(`🎉 Order placed for Table ${tableNum}! Sent to kitchen.`);
                     appCart = {};
                     renderAppCart();
                 } else {
@@ -1851,7 +1875,7 @@ def serve_mobile_frontend():
                         </div>
                         <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
                         <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
-                        ${item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : '<div style="font-size: 0.7rem; color: var(--success); font-weight: 700; margin: 4px 0;">⚡ App Order - Automatic Cashback Applied</div>'}
+                        ${item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : '<div style="font-size: 0.7rem; color: var(--success); font-weight: 700; margin: 4px 0;">⚡ NFC App Order - Automatic Cashback Applied</div>'}
                         <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
                     </div>
                 `).join('');
