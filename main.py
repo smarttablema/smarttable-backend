@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.8.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.9.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -548,18 +548,52 @@ def get_daily_report(slug: str):
         return {"total_revenue": 0.0, "orders_count": 0, "cashback_points_issued": 0, "cashback_transactions": 0}
 
 @app.post("/api/admin/{slug}/reports/clear")
-def clear_daily_reports(slug: str):
+def clear_daily_reports(slug: str, data: dict):
+    password = data.get("password", "").strip()
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("SELECT * FROM owner_admin WHERE username = 'admin';")
+        admin = cur.fetchone()
+        if not admin or admin["password"] != password:
+            raise HTTPException(status_code=401, detail="Incorrect admin password.")
+
         cur.execute("DELETE FROM pos_orders WHERE restaurant_slug = %s;", (slug,))
         cur.execute("DELETE FROM cashback_audit_log WHERE restaurant_slug = %s;", (slug,))
         conn.commit()
         cur.close()
         conn.close()
         return {"status": "success", "message": "All reports and logs cleared successfully."}
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/{slug}/analytics")
+def get_analytics_insights(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT phone_number, points_balance, has_purchased FROM customers ORDER BY points_balance DESC LIMIT 5;")
+        vips = cur.fetchall()
+        
+        cur.execute("SELECT COUNT(*) as total, SUM(CASE WHEN has_purchased = TRUE THEN 1 ELSE 0 END) as buyers FROM customers;")
+        cust_stats = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        total_cust = cust_stats["total"] or 1
+        buyers = cust_stats["buyers"] or 0
+        return_rate = round((buyers / total_cust) * 100, 1)
+        
+        vip_list = [{"phone": v["phone_number"], "points": v["points_balance"]} for v in vips]
+        return {
+            "total_customers": total_cust,
+            "return_rate": return_rate,
+            "vip_spenders": vip_list
+        }
+    except Exception:
+        return {"total_customers": 0, "return_rate": 0.0, "vip_spenders": []}
 
 @app.get("/api/menu/{slug}")
 def get_menu(slug: str):
@@ -796,7 +830,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI 100% AUTOMATED VIA NFC URL PARAMETER ---
+# --- FRONTEND UI WITH FLOOR MAP & ANALYTICS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -826,7 +860,7 @@ def serve_mobile_frontend():
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
         body { background-color: var(--bg-deep); color: var(--text-main); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 1rem; background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-deep) 70%); }
         
-        .app-frame { width: 100%; max-width: 440px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
+        .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
         .brand-header { text-align: center; margin-bottom: 1.25rem; }
         .logo { font-size: 1.65rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
@@ -909,9 +943,9 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
-        .admin-subnav { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
-        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.52rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
-        .admin-sub-btn span.nav-icon { font-size: 1rem; margin-bottom: 2px; display: block; line-height: 1; }
+        .admin-subnav { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); overflow-x: auto; }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.5rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 0.95rem; margin-bottom: 2px; display: block; line-height: 1; }
         .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         
@@ -919,27 +953,16 @@ def serve_mobile_frontend():
         
         .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 14px; border-radius: 12px; border: 1px solid var(--border); transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         .redemption-card.urgency-normal { border-left-color: var(--success); }
-        
-        .redemption-card.urgency-orange { 
-            border-left-color: #f97316; 
-            background: linear-gradient(135deg, rgba(249, 115, 22, 0.12) 0%, rgba(26, 38, 66, 0.95) 100%);
-            border-top: 1px solid rgba(249, 115, 22, 0.4);
-            border-right: 1px solid rgba(249, 115, 22, 0.4);
-            border-bottom: 1px solid rgba(249, 115, 22, 0.4);
-            box-shadow: 0 6px 20px rgba(249, 115, 22, 0.18);
-        }
-
-        .redemption-card.urgency-red { 
-            border-left-color: var(--danger); 
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(26, 38, 66, 0.95) 100%);
-            border-top: 1px solid rgba(239, 68, 68, 0.6);
-            border-right: 1px solid rgba(239, 68, 68, 0.6);
-            border-bottom: 1px solid rgba(239, 68, 68, 0.6);
-            box-shadow: 0 8px 25px rgba(239, 68, 68, 0.35);
-        }
+        .redemption-card.urgency-orange { border-left-color: #f97316; background: linear-gradient(135deg, rgba(249, 115, 22, 0.12) 0%, rgba(26, 38, 66, 0.95) 100%); border: 1px solid rgba(249, 115, 22, 0.4); }
+        .redemption-card.urgency-red { border-left-color: var(--danger); background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(26, 38, 66, 0.95) 100%); border: 1px solid rgba(239, 68, 68, 0.6); }
 
         .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
         
+        .floor-card { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; transition: all 0.2s; }
+        .floor-card.status-green { border-color: rgba(16, 185, 129, 0.4); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, var(--bg-deep) 100%); }
+        .floor-card.status-orange { border-color: rgba(249, 115, 22, 0.5); background: linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, var(--bg-deep) 100%); }
+        .floor-card.status-red { border-color: rgba(239, 68, 68, 0.6); background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, var(--bg-deep) 100%); }
+
         .auth-sub-toggle { display: flex; gap: 8px; margin-bottom: 1rem; }
         .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
         .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
@@ -1038,7 +1061,6 @@ def serve_mobile_frontend():
             </div>
             
             <div id="dashboard-section" class="card hidden" style="padding: 1rem;">
-                <!-- PROFESSIONAL WALLET & BALANCE CARD -->
                 <div class="wallet-card">
                     <div class="wallet-top-row">
                         <span class="tier-badge" id="customer-tier-badge">Classic Member</span>
@@ -1080,7 +1102,6 @@ def serve_mobile_frontend():
                     <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">📖 Interactive Menu & Order</h3>
                 </div>
 
-                <!-- 100% AUTOMATED NFC TABLE STATUS -->
                 <div id="table-selection-container"></div>
 
                 <div id="menu-container" class="menu-grid">
@@ -1106,6 +1127,12 @@ def serve_mobile_frontend():
             <div class="admin-subnav">
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
                     <span class="nav-icon">🔥</span><span class="nav-text">Queue</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('floor')" id="sub-btn-floor">
+                    <span class="nav-icon">🪑</span><span class="nav-text">Floor</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('analytics')" id="sub-btn-analytics">
+                    <span class="nav-icon">📈</span><span class="nav-text">Insights</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
                     <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
@@ -1134,6 +1161,35 @@ def serve_mobile_frontend():
                     <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Oldest orders dynamically shift Amber / Red</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FLOOR PLAN VIEW -->
+            <div id="admin-sub-floor" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Live status across restaurant tables</p>
+                    <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; grid-column: span 2;">Loading floor map...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SMART ANALYTICS & CRM -->
+            <div id="admin-sub-analytics" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Customer retention and VIP insights</p>
+                    
+                    <div style="background: var(--bg-deep); padding: 12px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem; text-align: center;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Customer Return Rate</div>
+                        <div id="analytics-return-rate" style="font-size: 1.5rem; font-weight: 800; color: var(--success);">0%</div>
+                    </div>
+
+                    <label>⭐ Top VIP Spenders Leaderboard:</label>
+                    <div id="analytics-vip-list" style="max-height: 150px; overflow-y: auto;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading VIPs...</div>
                     </div>
                 </div>
             </div>
@@ -1297,11 +1353,13 @@ def serve_mobile_frontend():
         </div>
     </div>
 
+    <!-- CLEAR REPORTS SECURE MODAL -->
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">This will permanently wipe all daily orders and cashback logs for the current shift. Are you sure?</p>
-            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.5rem;">Yes, Clear Shift Data</button>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:</p>
+            <input type="password" id="reset-admin-pwd" placeholder="Enter admin password" style="margin-bottom: 1rem;" />
+            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.5rem;">Confirm & Wipe Shift</button>
             <button class="close-modal" onclick="document.getElementById('clear-reports-modal').style.display='none'">Cancel</button>
         </div>
     </div>
@@ -1344,6 +1402,7 @@ def serve_mobile_frontend():
         let appCart = {};
         let menuItemsCache = [];
         let lockedTableNumber = null;
+        let activeQueueCache = [];
         
         window.onload = function() {
             loadRestaurantSettings();
@@ -1361,7 +1420,6 @@ def serve_mobile_frontend():
                     </div>
                 `;
             } else {
-                // Fully automated lock: Disable ordering if no NFC tag / table param is scanned
                 tableContainer.innerHTML = `
                     <div class="table-badge-unlocked">
                         ⚠️ No Table NFC Tag Detected!<br>Please scan the NFC sticker or QR code on your table to place an order.
@@ -1420,6 +1478,8 @@ def serve_mobile_frontend():
                     loadDailyReport();
                     loadAdminMenu();
                     loadAdminRewards();
+                    loadAnalytics();
+                    loadAdminFloorPlan();
                     setInterval(loadAdminQueue, 5000);
                     showToast('Owner authorized successfully!');
                 } else {
@@ -1658,7 +1718,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'menu', 'reports', 'rewards', 'cashback', 'pos', 'settings'].forEach(s => {
+            ['queue', 'floor', 'analytics', 'menu', 'reports', 'rewards', 'cashback', 'pos', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -1669,6 +1729,8 @@ def serve_mobile_frontend():
             if(targetBtn) targetBtn.classList.add('active');
             if(targetSec) targetSec.classList.remove('hidden');
             if(subName === 'queue') loadAdminQueue();
+            if(subName === 'floor') loadAdminFloorPlan();
+            if(subName === 'analytics') loadAnalytics();
             if(subName === 'pos') loadPOSMenu();
             if(subName === 'cashback') loadCashbackLog();
             if(subName === 'reports') loadDailyReport();
@@ -1857,21 +1919,78 @@ def serve_mobile_frontend():
         }
 
         function openClearReportsModal() {
+            document.getElementById('reset-admin-pwd').value = '';
             document.getElementById('clear-reports-modal').style.display = 'flex';
         }
 
         async function executeClearReports() {
-            document.getElementById('clear-reports-modal').style.display = 'none';
+            const pwd = document.getElementById('reset-admin-pwd').value.trim();
+            if(!pwd) { showToast('Admin password required', true); return; }
+
             try {
-                const res = await fetch('/api/admin/' + currentSlug + '/reports/clear', { method: 'POST' });
+                const res = await fetch('/api/admin/' + currentSlug + '/reports/clear', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ password: pwd })
+                });
+                const data = await res.json();
                 if(res.ok) {
+                    document.getElementById('clear-reports-modal').style.display = 'none';
                     showToast('Shift data cleared successfully!');
                     loadDailyReport();
                     loadCashbackLog();
+                } else {
+                    showToast(data.detail || 'Incorrect password', true);
                 }
             } catch(e) {
                 showToast('Error clearing data', true);
             }
+        }
+
+        async function loadAnalytics() {
+            try {
+                const res = await fetch('/api/admin/' + currentSlug + '/analytics');
+                const data = await res.json();
+                document.getElementById('analytics-return-rate').innerText = data.return_rate + '%';
+                const vipContainer = document.getElementById('analytics-vip-list');
+                if(!data.vip_spenders || data.vip_spenders.length === 0) {
+                    vipContainer.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No VIP customers yet.</div>';
+                    return;
+                }
+                vipContainer.innerHTML = data.vip_spenders.map((v, i) => `
+                    <div class="admin-item-row">
+                        <span><b>#${i+1} ${v.phone}</b></span>
+                        <span style="color: var(--accent); font-weight: 800;">⭐ ${v.points} pts</span>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        async function loadAdminFloorPlan() {
+            const tables = ['1', '2', '3', '4', '5', '6', 'VIP'];
+            const grid = document.getElementById('admin-floor-grid');
+            
+            let tableMap = {};
+            activeQueueCache.forEach(q => {
+                tableMap[q.table_number] = q;
+            });
+
+            grid.innerHTML = tables.map(t => {
+                const activeOrder = tableMap[t];
+                let statusClass = 'status-green';
+                let statusText = '🟢 Available';
+                if(activeOrder) {
+                    statusClass = 'status-orange';
+                    statusText = `🟠 Table ${t} Active`;
+                }
+                return `
+                    <div class="floor-card ${statusClass}">
+                        <div style="font-size: 1rem; font-weight: 800; color: var(--text-main); margin-bottom: 4px;">Table ${t}</div>
+                        <div style="font-size: 0.72rem; font-weight: 700;">${statusText}</div>
+                        ${activeOrder ? `<div style="font-size: 0.65rem; color: var(--accent); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${activeOrder.reward_item}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
         }
 
         async function submitCashback() {
@@ -1937,15 +2056,18 @@ def serve_mobile_frontend():
             try {
                 const res = await fetch('/api/admin/' + currentSlug + '/redemptions');
                 const data = await res.json();
+                activeQueueCache = data.queue || [];
+                loadAdminFloorPlan();
+
                 const container = document.getElementById('admin-queue-container');
-                if(!data.queue || data.queue.length === 0) {
+                if(!activeQueueCache || activeQueueCache.length === 0) {
                     container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
                     return;
                 }
                 
                 const now = new Date();
 
-                container.innerHTML = data.queue.map(item => {
+                container.innerHTML = activeQueueCache.map(item => {
                     const orderDate = new Date(item.raw_time);
                     const diffMinutes = Math.floor((now - orderDate) / 60000);
 
@@ -1955,7 +2077,7 @@ def serve_mobile_frontend():
                     
                     if(diffMinutes >= 5 && diffMinutes < 10) {
                         urgencyClass = 'urgency-orange';
-                        timeBadgeText = `⚠️ ${diffMinutes}m waiting (Attention)`;
+                        timeBadgeText = `⚠️ ${diffMinutes}m waiting`;
                         badgeColor = '#f97316';
                     } else if(diffMinutes >= 10) {
                         urgencyClass = 'urgency-red';
