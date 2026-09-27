@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.6.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.7.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -796,7 +796,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH CLIENT BALANCE REFRESH BUTTON & QUEUE URGENCY STYLING ---
+# --- FRONTEND UI WITH PROFESSIONAL POLISHED CLIENT REWARDS & BALANCE REFRESH ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -848,22 +848,30 @@ def serve_mobile_frontend():
         
         .hidden { display: none !important; }
         
-        .points-display { text-align: center; padding: 0.2rem 0; position: relative; }
-        .points-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
-        .points-number { font-size: 2.75rem; font-weight: 800; color: var(--success); letter-spacing: -1px; margin: 0.2rem 0; }
-        .tier-badge { display: inline-block; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
+        /* PROFESSIONALLY DESIGNED BALANCE COMPONENT */
+        .wallet-card { background: linear-gradient(135deg, rgba(26, 38, 66, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 16px; padding: 1.25rem; text-align: center; margin-bottom: 1.25rem; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        .wallet-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .tier-badge { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 4px 10px; border-radius: 20px; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+        .refresh-balance-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 4px 10px; border-radius: 20px; font-size: 0.68rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
+        .refresh-balance-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); transform: translateY(-1px); }
+        
+        .wallet-balance-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 0.25rem; }
+        .wallet-balance-number { font-size: 2.8rem; font-weight: 800; color: var(--success); letter-spacing: -1px; line-height: 1.1; margin: 0.2rem 0 0.5rem 0; text-shadow: 0 2px 10px rgba(16, 185, 129, 0.2); }
+        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 12px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; }
 
-        .refresh-balance-btn { background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 4px 8px; border-radius: 8px; font-size: 0.68rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: background 0.2s; vertical-align: middle; margin-left: 6px; }
-        .refresh-balance-btn:hover { background: rgba(56, 189, 248, 0.3); }
-
-        .rewards-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto; margin-top: 0.5rem; padding-right: 2px; }
-        .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid var(--border); gap: 0.5rem; }
-        .reward-thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: var(--surface); }
-        .reward-info { flex: 1; }
-        .reward-title { font-size: 0.82rem; font-weight: 700; color: var(--text-main); }
-        .reward-cost { font-size: 0.7rem; color: var(--accent); font-weight: 700; }
-        .redeem-btn { background: var(--success); color: white; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 700; font-size: 0.72rem; cursor: pointer; }
+        /* REFINED REDEEMABLE REWARDS LIST */
+        .rewards-section-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.6rem; display: flex; align-items: center; gap: 6px; }
+        .rewards-list { display: flex; flex-direction: column; gap: 0.65rem; max-height: 180px; overflow-y: auto; margin-bottom: 1rem; padding-right: 3px; }
+        
+        .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.7rem 0.85rem; border-radius: 14px; border: 1px solid var(--border); gap: 0.75rem; transition: border-color 0.2s; }
+        .reward-item:hover { border-color: rgba(245, 158, 11, 0.4); }
+        .reward-thumb { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: var(--surface); border: 1px solid var(--border); }
+        .reward-info { flex: 1; text-align: left; }
+        .reward-title { font-size: 0.88rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+        .reward-cost { font-size: 0.72rem; color: var(--accent); font-weight: 700; display: inline-flex; align-items: center; gap: 3px; }
+        
+        .redeem-btn { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 7px 14px; border-radius: 10px; font-weight: 700; font-size: 0.75rem; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); transition: transform 0.1s; }
+        .redeem-btn:active { transform: scale(0.95); }
 
         .review-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; margin-top: 0.75rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 0.8rem; }
 
@@ -942,9 +950,9 @@ def serve_mobile_frontend():
         .forgot-link a { font-size: 0.72rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .forgot-link a:hover { text-decoration: underline; }
 
-        .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
-        .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
-        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+        .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.85rem; }
+        .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 14px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
         
         .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
     </style>
@@ -1030,25 +1038,26 @@ def serve_mobile_frontend():
                 </div>
             </div>
             
-            <div id="dashboard-section" class="card hidden">
-                <div class="points-display">
-                    <div class="tier-badge" id="customer-tier-badge">Classic Member</div>
-                    <div class="points-label">
-                        Your Balance
-                        <button class="refresh-balance-btn" onclick="triggerRefreshBalance()" title="Refresh balance">🔄 Refresh</button>
+            <div id="dashboard-section" class="card hidden" style="padding: 1rem;">
+                <!-- PROFESSIONAL WALLET & BALANCE CARD -->
+                <div class="wallet-card">
+                    <div class="wallet-top-row">
+                        <span class="tier-badge" id="customer-tier-badge">Classic Member</span>
+                        <button class="refresh-balance-btn" onclick="triggerRefreshBalance()">🔄 Refresh</button>
                     </div>
-                    <div class="points-number" id="points-val">0</div>
+                    <div class="wallet-balance-label">Your Balance</div>
+                    <div class="wallet-balance-number" id="points-val">0</div>
                     <div class="cashback-badge" id="client-cashback-badge">⚡ 10% Bill Cashback Active</div>
                 </div>
                 
-                <div style="margin-top: 0.5rem;">
-                    <label>🎁 Redeemable Rewards</label>
+                <div>
+                    <div class="rewards-section-title">🎁 Redeemable Rewards</div>
                     <div id="customer-rewards-list" class="rewards-list">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading rewards...</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">Loading rewards...</div>
                     </div>
                 </div>
 
-                <div style="border-top: 1px solid var(--border); margin-top: 0.85rem; padding-top: 0.75rem;">
+                <div style="border-top: 1px solid var(--border); margin-top: 0.5rem; padding-top: 0.75rem;">
                     <label id="referral-label-text">👥 Refer a Friend (+50 pts on 1st visit)</label>
                     <input type="tel" id="friend-phone" placeholder="Friend's Phone Number" />
                     <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; padding: 0.6rem; font-size: 0.85rem;">Register Friend</button>
@@ -1059,7 +1068,7 @@ def serve_mobile_frontend():
                 </a>
 
                 <div class="dashboard-actions">
-                    <button class="dash-action-btn" onclick="openClientPasswordModal()">🔒 Change Password</button>
+                    <button class="dash-action-btn" onclick="openClientPasswordModal()">🔒 Password</button>
                     <button class="logout-btn" onclick="logoutCustomer()">🚪 Log Out</button>
                 </div>
             </div>
@@ -1981,7 +1990,7 @@ def serve_mobile_frontend():
                 const rewards = await res.json();
                 const container = document.getElementById('customer-rewards-list');
                 if(!rewards || rewards.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No rewards.</div>';
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No rewards available.</div>';
                     return;
                 }
                 container.innerHTML = rewards.map(r => `
@@ -1989,7 +1998,7 @@ def serve_mobile_frontend():
                         <img src="${r.image_url || 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500'}" class="reward-thumb" />
                         <div class="reward-info">
                             <div class="reward-title">${r.title}</div>
-                            <div class="reward-cost">${r.points_required} pts</div>
+                            <div class="reward-cost">⭐ ${r.points_required} Points</div>
                         </div>
                         <button class="redeem-btn" onclick="openRedeemModal(${r.id})">Redeem</button>
                     </div>
