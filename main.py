@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.4.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.5.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -119,6 +119,11 @@ class CustomerLogin(BaseModel):
     password: str
     restaurant_slug: str = "default-restaurant"
 
+class CustomerPinRecover(BaseModel):
+    phone_number: str
+    recovery_pin: str
+    restaurant_slug: str = "default-restaurant"
+
 class AdminLogin(BaseModel):
     username: str
     password: str
@@ -218,9 +223,34 @@ def login_customer(data: CustomerLogin):
             raise HTTPException(status_code=404, detail="Account not found. Please register first.")
         
         if customer.get("password") != pwd:
-            raise HTTPException(status_code=401, detail="Incorrect password. Use recovery PIN if forgotten.")
+            raise HTTPException(status_code=401, detail="Incorrect password. Use 'Forgot Password?' with your PIN.")
 
         return {"status": "success", "points_balance": customer["points_balance"]}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/customer/recover")
+def recover_customer_pin(data: CustomerPinRecover):
+    clean_phone = normalize_phone(data.phone_number)
+    pin = data.recovery_pin.strip()
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
+        customer = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not customer:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        
+        if customer.get("recovery_pin") != pin:
+            raise HTTPException(status_code=401, detail="Incorrect recovery PIN.")
+
+        return {"status": "success", "points_balance": customer["points_balance"], "message": "PIN verified successfully!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -658,7 +688,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH SEPARATE CUSTOMER REGISTER / SIGN IN & OWNER GATE ---
+# --- FRONTEND UI WITH FORGOT PASSWORD PIN RECOVERY & LOGOUT BUTTON ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -699,7 +729,7 @@ def serve_mobile_frontend():
         .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 10px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
         .tab-btn.active { background: var(--surface-card); color: var(--text-main); box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid var(--border); }
         
-        .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); }
+        .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); position: relative; }
         
         label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px; }
         input, textarea { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
@@ -755,7 +785,6 @@ def serve_mobile_frontend():
 
         .admin-item-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; margin-bottom: 0.5rem; font-size: 0.85rem; border: 1px solid var(--border); }
         .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; }
-        .edit-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; margin-right: 6px; }
 
         #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(120px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 24px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; box-shadow: 0 15px 30px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.2); }
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
@@ -774,6 +803,14 @@ def serve_mobile_frontend():
         .auth-sub-toggle { display: flex; gap: 8px; margin-bottom: 1rem; }
         .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
         .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
+        
+        .forgot-link { text-align: right; margin-top: -0.4rem; margin-bottom: 0.85rem; }
+        .forgot-link a { font-size: 0.72rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
+        .forgot-link a:hover { text-decoration: underline; }
+
+        .logout-btn-container { text-align: right; margin-top: 0.75rem; }
+        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+        .logout-btn:hover { background: rgba(239, 68, 68, 0.3); }
     </style>
 </head>
 <body>
@@ -808,12 +845,12 @@ def serve_mobile_frontend():
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
         </div>
 
-        <!-- CLIENT: REWARDS TAB WITH SIGN IN / REGISTER TABS -->
+        <!-- CLIENT: REWARDS TAB WITH SIGN IN, REGISTER & FORGOT PIN RECOVERY -->
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <div class="auth-sub-toggle">
                     <button class="auth-toggle-btn active" id="btn-toggle-signin" onclick="switchAuthMode('signin')">Sign In</button>
-                    <button class="auth-toggle-btn" id="btn-toggle-register" onclick="switchAuthMode('register')">Register Account</button>
+                    <button class="auth-toggle-btn" id="btn-toggle-register" onclick="switchAuthMode('register')">Register</button>
                 </div>
 
                 <!-- SIGN IN FORM -->
@@ -823,6 +860,9 @@ def serve_mobile_frontend():
                     <input type="tel" id="signin-phone" placeholder="e.g., 0612345678" />
                     <label>Password</label>
                     <input type="password" id="signin-password" placeholder="Your password" />
+                    <div class="forgot-link">
+                        <a onclick="switchAuthMode('recover')">Forgot Password?</a>
+                    </div>
                     <button class="btn-main" onclick="loginCustomer()">Sign In to Account</button>
                 </div>
 
@@ -835,7 +875,21 @@ def serve_mobile_frontend():
                     <input type="password" id="reg-password" placeholder="Create a password" />
                     <label>Recovery PIN (4-Digits for Reset)</label>
                     <input type="password" id="reg-pin" placeholder="e.g., 1234" maxlength="4" />
-                    <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16;">Register & Create Account</button>
+                    <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;">Register & Create Account</button>
+                </div>
+
+                <!-- RECOVER FORM -->
+                <div id="form-recover" class="hidden">
+                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--primary);">Recover via PIN</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.85rem;">Enter your phone and your 4-digit registration PIN to sign in.</p>
+                    <label>Phone Number</label>
+                    <input type="tel" id="recover-phone" placeholder="e.g., 0612345678" />
+                    <label>4-Digit Recovery PIN</label>
+                    <input type="password" id="recover-pin" placeholder="e.g., 1234" maxlength="4" />
+                    <button class="btn-main" onclick="recoverCustomer()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; margin-top: 0.5rem;">Verify PIN & Login</button>
+                    <div style="text-align: center; margin-top: 0.75rem;">
+                        <a onclick="switchAuthMode('signin')" style="font-size: 0.75rem; color: var(--text-muted); cursor: pointer;">Back to Sign In</a>
+                    </div>
                 </div>
             </div>
             
@@ -863,6 +917,10 @@ def serve_mobile_frontend():
                 <a href="https://maps.google.com" target="_blank" class="review-link" id="review-link-btn" onclick="claimReview()">
                     ⭐ Leave Google Review (+50 Points)
                 </a>
+
+                <div class="logout-btn-container">
+                    <button class="logout-btn" onclick="logoutCustomer()">🚪 Log Out</button>
+                </div>
             </div>
         </div>
 
@@ -1110,16 +1168,20 @@ def serve_mobile_frontend():
         };
 
         function switchAuthMode(mode) {
+            document.getElementById('form-signin').classList.add('hidden');
+            document.getElementById('form-register').classList.add('hidden');
+            document.getElementById('form-recover').classList.add('hidden');
+            document.getElementById('btn-toggle-signin').classList.remove('active');
+            document.getElementById('btn-toggle-register').classList.remove('active');
+
             if(mode === 'signin') {
                 document.getElementById('btn-toggle-signin').classList.add('active');
-                document.getElementById('btn-toggle-register').classList.remove('active');
                 document.getElementById('form-signin').classList.remove('hidden');
-                document.getElementById('form-register').classList.add('hidden');
-            } else {
+            } else if(mode === 'register') {
                 document.getElementById('btn-toggle-register').classList.add('active');
-                document.getElementById('btn-toggle-signin').classList.remove('active');
                 document.getElementById('form-register').classList.remove('hidden');
-                document.getElementById('form-signin').classList.add('hidden');
+            } else if(mode === 'recover') {
+                document.getElementById('form-recover').classList.remove('hidden');
             }
         }
 
@@ -1207,6 +1269,42 @@ def serve_mobile_frontend():
             } catch(e) {
                 showToast('Connection error', true);
             }
+        }
+
+        async function recoverCustomer() {
+            const phone = document.getElementById('recover-phone').value.trim();
+            const pin = document.getElementById('recover-pin').value.trim();
+            if(!phone || !pin) { showToast('Enter phone and recovery PIN', true); return; }
+            currentPhone = phone;
+            try {
+                const res = await fetch('/api/customer/recover', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: phone, recovery_pin: pin, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('points-val').innerText = data.points_balance;
+                    document.getElementById('login-section').classList.add('hidden');
+                    document.getElementById('dashboard-section').classList.remove('hidden');
+                    loadCustomerData();
+                    showToast('PIN verified! Welcome back.');
+                } else {
+                    showToast(data.detail || 'Recovery failed', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
+        function logoutCustomer() {
+            currentPhone = '';
+            document.getElementById('dashboard-section').classList.add('hidden');
+            document.getElementById('login-section').classList.remove('hidden');
+            document.getElementById('signin-phone').value = '';
+            document.getElementById('signin-password').value = '';
+            switchAuthMode('signin');
+            showToast('Logged out successfully.');
         }
 
         async function loadRestaurantSettings() {
