@@ -12,14 +12,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.8.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="9.2.0")
 
-# --- INITIALIZE DATABASE TABLES INCLUDING SECURITY & QUEUES ---
 @app.on_event("startup")
 def startup_db():
     conn = get_db_connection()
     cur = conn.cursor()
-    # 1. Pending Referrals Table (First-Purchase Lock Security)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_referrals (
             id SERIAL PRIMARY KEY,
@@ -29,7 +27,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    # 2. Redemption Queue Table (Friday Rush Cashier View)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS redemption_queue (
             id SERIAL PRIMARY KEY,
@@ -43,7 +40,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    # 3. Active Vouchers Table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS active_vouchers (
             id SERIAL PRIMARY KEY,
@@ -101,6 +97,11 @@ class SettingsUpdate(BaseModel):
 class VoucherValidate(BaseModel):
     code: str
 
+class CashbackProcess(BaseModel):
+    phone_number: str
+    bill_amount: float
+    restaurant_slug: str = "default-restaurant"
+
 @app.get("/api/health")
 def health_check():
     return {"status": "online", "database": "neon-postgres", "brand": "smarttable.ma"}
@@ -110,7 +111,7 @@ def authenticate_customer(data: CustomerAuth):
     phone = data.phone_number.strip()
     clean_phone = re.sub(r'[\s\-\(\)]', '', phone)
     if not re.match(r'^\+?\d{8,15}$', clean_phone):
-        raise HTTPException(status_code=400, detail="Invalid phone number format. Please enter a valid mobile number (8 to 15 digits).")
+        raise HTTPException(status_code=400, detail="Invalid phone number format.")
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -123,6 +124,29 @@ def authenticate_customer(data: CustomerAuth):
         cur.close()
         conn.close()
         return {"status": "success", "points_balance": customer["points_balance"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/cashback/process")
+def process_cashback(data: CashbackProcess):
+    """Calculates 10% bill cashback in points and credits the customer account."""
+    try:
+        earned_points = int(data.bill_amount * 0.10) # 10% cashback value in points
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
+        customer = cur.fetchone()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer phone not found.")
+        
+        new_balance = customer["points_balance"] + earned_points
+        cur.execute("UPDATE customers SET points_balance = %s, has_purchased = TRUE WHERE phone_number = %s;", (new_balance, data.phone_number))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "earned_points": earned_points, "new_balance": new_balance, "message": f"Successfully credited {earned_points} points (10% cashback)!"}
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -170,7 +194,7 @@ def update_restaurant_settings(data: SettingsUpdate):
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Campaign points settings updated successfully!"}
+        return {"status": "success", "message": "Campaign settings updated successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -294,17 +318,13 @@ def get_tiers(slug: str):
         conn.close()
         if not tiers:
             return [
-                {"id": 1, "name": "Classic Burger Tier", "min_points": 0},
-                {"id": 2, "name": "Double Burger Tier", "min_points": 100},
-                {"id": 3, "name": "S-Tier VIP Burger", "min_points": 300}
+                {"id": 1, "name": "Classic Member", "min_points": 0},
+                {"id": 2, "name": "Silver VIP", "min_points": 100},
+                {"id": 3, "name": "Gold VIP", "min_points": 300}
             ]
         return tiers
     except Exception:
-        return [
-            {"id": 1, "name": "Classic Burger Tier", "min_points": 0},
-            {"id": 2, "name": "Double Burger Tier", "min_points": 100},
-            {"id": 3, "name": "S-Tier VIP Burger", "min_points": 300}
-        ]
+        return []
 
 @app.post("/api/admin/tiers/add")
 def add_tier(tier: TierCreate):
@@ -341,7 +361,10 @@ def redeem_reward(data: dict):
     reward_id = data.get("reward_id")
     slug = data.get("restaurant_slug", "default-restaurant")
     table_number = data.get("table_number", "1")
-    customer_name = data.get("customer_name", "Guest")
+    customer_name = data.get("customer_name", "Valued Guest").strip()
+    if not customer_name:
+        customer_name = "Valued Guest"
+        
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -354,9 +377,7 @@ def redeem_reward(data: dict):
         reward = cur.fetchone()
         cost = reward["points_required"] if reward else 50
         title = reward["title"] if reward else "Free Item"
-        img = reward.get("image_url") if reward else ""
-        if not img:
-            img = "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500"
+        img = reward.get("image_url") or "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500"
 
         if customer["points_balance"] < cost:
             raise HTTPException(status_code=400, detail="Insufficient points balance.")
@@ -506,7 +527,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- WORLD-CLASS SAAS ENTERPRISE UI (COMPLETE SINGLE-FILE APP) ---
+# --- FULL UI WITH CASHBACK POS & CUSTOMER NAME PROMPT ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -640,7 +661,7 @@ def serve_mobile_frontend():
                     <div class="tier-badge" id="customer-tier-badge">Classic Member</div>
                     <div class="points-label">Your Balance</div>
                     <div class="points-number" id="points-val">0</div>
-                    <div class="cashback-badge">⚡ 10% Cashback Active</div>
+                    <div class="cashback-badge">⚡ 10% Bill Cashback Active</div>
                 </div>
                 
                 <div style="margin-top: 0.5rem;">
@@ -681,6 +702,9 @@ def serve_mobile_frontend():
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
                     <span class="nav-icon">🔥</span><span class="nav-text">Queue</span>
                 </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('cashback')" id="sub-btn-cashback">
+                    <span class="nav-icon">⚡</span><span class="nav-text">Cashback</span>
+                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
                     <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
                 </button>
@@ -690,24 +714,39 @@ def serve_mobile_frontend():
                 <button class="admin-sub-btn" onclick="switchAdminSub('tiers')" id="sub-btn-tiers">
                     <span class="nav-icon">👑</span><span class="nav-text">Tiers</span>
                 </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('campaigns')" id="sub-btn-campaigns">
-                    <span class="nav-icon">📢</span><span class="nav-text">Broadcast</span>
-                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">
                     <span class="nav-icon">⚙️</span><span class="nav-text">Settings</span>
                 </button>
             </div>
 
+            <!-- LIVE QUEUE -->
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Redemption Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Friday rush priority redemptions (auto-polls every 5s)</p>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Shows customer names & pins (auto-polls every 5s)</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No pending redemptions right now. All quiet!</div>
                     </div>
                 </div>
             </div>
 
+            <!-- 10% CASHBACK POS ENTRY -->
+            <div id="admin-sub-cashback" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.5rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">⚡ 10% Bill Cashback POS</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.85rem;">When paying the table bill, enter customer phone and bill total. System automatically computes 10% in points!</p>
+                    
+                    <label>Customer Phone Number</label>
+                    <input type="tel" id="cb-phone" placeholder="e.g. 0612345678" />
+                    
+                    <label>Total Bill Amount (MAD)</label>
+                    <input type="number" id="cb-amount" placeholder="e.g. 250" />
+                    
+                    <button class="btn-main" onclick="submitCashback()" style="background: var(--success); color: white; padding: 0.7rem; font-size: 0.85rem;">Credit 10% Cashback Points ✓</button>
+                </div>
+            </div>
+
+            <!-- MENU EDITOR -->
             <div id="admin-sub-menu" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
@@ -726,6 +765,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
+            <!-- REWARDS BUILDER -->
             <div id="admin-sub-rewards" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
@@ -742,6 +782,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
+            <!-- LOYALTY TIERS BUILDER -->
             <div id="admin-sub-tiers" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">👑 Loyalty Tiers Builder</h3>
@@ -756,31 +797,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <div id="admin-sub-campaigns" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📢 Client Communications</h3>
-                    <div id="customer-count-badge" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Registered Clients: Loading...</div>
-                    <div id="admin-customers-list" style="max-height: 80px; overflow-y: auto; margin-bottom: 0.75rem; background: var(--bg-deep); padding: 6px; border-radius: 8px; border: 1px solid var(--border);"></div>
-                    <button class="btn-main" onclick="copyCustomerNumbers()" style="background: #3b82f6; color: white; padding: 0.5rem; font-size: 0.75rem; margin-bottom: 0.75rem;">📋 Copy All Client Phone Numbers</button>
-                    
-                    <label>WhatsApp Broadcast</label>
-                    <textarea id="broadcast-msg-input" rows="2" placeholder="Promo announcement text..."></textarea>
-                    <button class="btn-main" onclick="sendWhatsAppBroadcast()" style="background: #25d366; color: white; padding: 0.6rem; font-size: 0.8rem;">📢 Broadcast via WhatsApp</button>
-                </div>
-
-                <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--success);">✓ Validate Customer Voucher</h3>
-                    <label>4-Digit Voucher Code</label>
-                    <input type="text" id="voucher-input" placeholder="e.g. 4892" style="margin-bottom: 0.5rem;" />
-                    <button class="btn-main" onclick="validateVoucher()" style="background: var(--success); color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 0.5rem;">Verify & Redeem Code</button>
-                    <div id="voucher-result" class="hidden" style="text-align: center; border-top: 1px solid var(--border); padding-top: 0.5rem;">
-                        <img id="v-img" style="width: 50px; height: 50px; border-radius: 8px; object-fit: cover; margin-bottom: 4px;" />
-                        <div id="v-title" style="font-size: 0.8rem; font-weight: 700; color: var(--success);"></div>
-                        <div id="v-phone" style="font-size: 0.65rem; color: var(--text-muted);"></div>
-                    </div>
-                </div>
-            </div>
-
+            <!-- SETTINGS -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign Reward Points</h3>
@@ -832,7 +849,6 @@ def serve_mobile_frontend():
                 document.getElementById('tab-admin').classList.remove('hidden');
                 document.getElementById('app-subtitle').innerText = "Owner Control Center";
                 loadAdminQueue();
-                loadAdminCustomers();
                 loadAdminMenu();
                 loadAdminRewards();
                 loadAdminTiers();
@@ -914,7 +930,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'menu', 'rewards', 'tiers', 'campaigns', 'settings'].forEach(s => {
+            ['queue', 'cashback', 'menu', 'rewards', 'tiers', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -925,6 +941,32 @@ def serve_mobile_frontend():
             if(targetBtn) targetBtn.classList.add('active');
             if(targetSec) targetSec.classList.remove('hidden');
             if(subName === 'queue') loadAdminQueue();
+        }
+
+        async function submitCashback() {
+            const phone = document.getElementById('cb-phone').value.trim();
+            const amount = parseFloat(document.getElementById('cb-amount').value);
+            if(!phone || isNaN(amount) || amount <= 0) {
+                showToast('Please enter a valid phone number and bill amount.', true);
+                return;
+            }
+            try {
+                const res = await fetch('/api/admin/cashback/process', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: phone, bill_amount: amount, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast(data.message);
+                    document.getElementById('cb-phone').value = '';
+                    document.getElementById('cb-amount').value = '';
+                } else {
+                    showToast(data.detail || 'Failed to process cashback', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
         }
 
         async function loadAdminQueue() {
@@ -942,8 +984,9 @@ def serve_mobile_frontend():
                             <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
                             <span style="font-size: 0.65rem; color: var(--text-muted);">${item.time}</span>
                         </div>
+                        <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 Customer: ${item.customer_name}</div>
                         <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);">Customer: ${item.customer_name} (${item.customer_phone || 'Client'})</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Phone: ${item.customer_phone || 'N/A'}</div>
                         <div class="pin-display">PIN: ${item.security_pin}</div>
                         <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem;">Mark Handed Out ✓</button>
                     </div>
@@ -963,45 +1006,6 @@ def serve_mobile_frontend():
             } catch(e) {
                 showToast('Error fulfilling reward', true);
             }
-        }
-
-        async function loadAdminCustomers() {
-            try {
-                const res = await fetch('/api/admin/customers');
-                cachedCustomers = await res.json();
-                document.getElementById('customer-count-badge').innerText = 'Registered Clients: ' + cachedCustomers.length + ' total';
-                const container = document.getElementById('admin-customers-list');
-                if(!cachedCustomers || cachedCustomers.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.7rem; text-align:center;">No clients registered yet.</div>';
-                    return;
-                }
-                container.innerHTML = cachedCustomers.map(c => `
-                    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; padding: 2px 0; border-bottom: 1px solid var(--border);">
-                        <span style="color: var(--primary);">📱 ${c.phone_number}</span>
-                        <span style="color: var(--success);">${c.points_balance} pts</span>
-                    </div>
-                `).join('');
-            } catch(e) {
-                console.error(e);
-            }
-        }
-
-        function copyCustomerNumbers() {
-            if(!cachedCustomers || cachedCustomers.length === 0) {
-                showToast('No client numbers to copy.', true);
-                return;
-            }
-            const numbers = cachedCustomers.map(c => c.phone_number).join(', ');
-            navigator.clipboard.writeText(numbers);
-            showToast('Copied ' + cachedCustomers.length + ' client phone numbers!');
-        }
-
-        function sendWhatsAppBroadcast() {
-            const msg = document.getElementById('broadcast-msg-input').value.trim();
-            if(!msg) { showToast('Please enter a broadcast message.', true); return; }
-            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
-            window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
-            showToast('Opening WhatsApp Broadcast...');
         }
 
         async function loadMenu() {
@@ -1065,7 +1069,7 @@ def serve_mobile_frontend():
                                 <div class="reward-title">${r.title}</div>
                                 <div class="reward-cost">${r.points_required} pts</div>
                             </div>
-                            <button class="redeem-btn" onclick="redeemReward(${r.id})">Redeem</button>
+                            <button class="redeem-btn" onclick="promptRedeem(${r.id})">Redeem</button>
                         </div>
                     `;
                 }).join('');
@@ -1074,7 +1078,10 @@ def serve_mobile_frontend():
             }
         }
 
-        async function redeemReward(rewardId) {
+        async function promptRedeem(rewardId) {
+            const customerName = prompt("Please enter your name for the waiter / cashier:", "Guest");
+            if(customerName === null) return; // User cancelled
+            
             try {
                 const res = await fetch('/api/rewards/redeem', {
                     method: 'POST',
@@ -1084,7 +1091,7 @@ def serve_mobile_frontend():
                         reward_id: rewardId, 
                         restaurant_slug: currentSlug,
                         table_number: "1",
-                        customer_name: "Customer " + currentPhone.slice(-4)
+                        customer_name: customerName || "Guest"
                     })
                 });
                 const data = await res.json();
@@ -1106,33 +1113,6 @@ def serve_mobile_frontend():
 
         function closeVoucherModal() {
             document.getElementById('voucher-modal').style.display = 'none';
-        }
-
-        async function validateVoucher() {
-            const code = document.getElementById('voucher-input').value;
-            const resBox = document.getElementById('voucher-result');
-            if(!code) { showToast('Please enter a voucher code.', true); return; }
-            try {
-                const res = await fetch('/api/admin/validate-voucher', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ code })
-                });
-                const data = await res.json();
-                if(res.ok) {
-                    document.getElementById('v-img').src = data.image_url;
-                    document.getElementById('v-title').innerText = "✓ Validated: " + data.reward_title;
-                    document.getElementById('v-phone').innerText = "Client Phone: " + data.phone_number;
-                    resBox.classList.remove('hidden');
-                    document.getElementById('voucher-input').value = '';
-                    showToast('Voucher successfully validated!');
-                } else {
-                    resBox.classList.add('hidden');
-                    showToast(data.detail || 'Invalid voucher code', true);
-                }
-            } catch(e) {
-                showToast('Error validating code', true);
-            }
         }
 
         async function addTier() {
