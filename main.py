@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.5.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.6.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -122,11 +122,23 @@ class CustomerLogin(BaseModel):
 class CustomerPinRecover(BaseModel):
     phone_number: str
     recovery_pin: str
+    new_password: str
+    restaurant_slug: str = "default-restaurant"
+
+class CustomerPasswordChange(BaseModel):
+    phone_number: str
+    old_password: str
+    new_password: str
     restaurant_slug: str = "default-restaurant"
 
 class AdminLogin(BaseModel):
     username: str
     password: str
+
+class AdminPasswordChange(BaseModel):
+    username: str = "admin"
+    old_password: str
+    new_password: str
 
 class CashbackProcess(BaseModel):
     phone_number: str
@@ -232,17 +244,19 @@ def login_customer(data: CustomerLogin):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/customer/recover")
-def recover_customer_pin(data: CustomerPinRecover):
+def recover_customer_password(data: CustomerPinRecover):
     clean_phone = normalize_phone(data.phone_number)
     pin = data.recovery_pin.strip()
+    new_pwd = data.new_password.strip()
     
+    if len(new_pwd) < 4:
+        raise HTTPException(status_code=400, detail="New password must be at least 4 characters.")
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
         customer = cur.fetchone()
-        cur.close()
-        conn.close()
 
         if not customer:
             raise HTTPException(status_code=404, detail="Account not found.")
@@ -250,7 +264,36 @@ def recover_customer_pin(data: CustomerPinRecover):
         if customer.get("recovery_pin") != pin:
             raise HTTPException(status_code=401, detail="Incorrect recovery PIN.")
 
-        return {"status": "success", "points_balance": customer["points_balance"], "message": "PIN verified successfully!"}
+        cur.execute("UPDATE customers SET password = %s WHERE phone_number = %s;", (new_pwd, clean_phone))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {"status": "success", "points_balance": customer["points_balance"], "message": "Password updated successfully!"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/customer/change-password")
+def change_customer_password(data: CustomerPasswordChange):
+    clean_phone = normalize_phone(data.phone_number)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_phone,))
+        customer = cur.fetchone()
+        if not customer or customer.get("password") != data.old_password.strip():
+            raise HTTPException(status_code=401, detail="Current password is incorrect.")
+        
+        if len(data.new_password.strip()) < 4:
+            raise HTTPException(status_code=400, detail="New password must be at least 4 characters.")
+
+        cur.execute("UPDATE customers SET password = %s WHERE phone_number = %s;", (data.new_password.strip(), clean_phone))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Password changed successfully!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -268,6 +311,26 @@ def admin_login(data: AdminLogin):
         if not admin or admin["password"] != data.password.strip():
             raise HTTPException(status_code=401, detail="Invalid owner credentials.")
         return {"status": "success", "message": "Owner login authorized."}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/change-password")
+def admin_change_password(data: AdminPasswordChange):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM owner_admin WHERE username = %s;", (data.username,))
+        admin = cur.fetchone()
+        if not admin or admin["password"] != data.old_password.strip():
+            raise HTTPException(status_code=401, detail="Current admin password is incorrect.")
+        
+        cur.execute("UPDATE owner_admin SET password = %s WHERE username = %s;", (data.new_password.strip(), data.username))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Admin password updated successfully!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -688,7 +751,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH FORGOT PASSWORD PIN RECOVERY & LOGOUT BUTTON ---
+# --- FRONTEND UI WITH CLIENT & OWNER PASSWORD CHANGE SETTINGS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -808,9 +871,9 @@ def serve_mobile_frontend():
         .forgot-link a { font-size: 0.72rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .forgot-link a:hover { text-decoration: underline; }
 
-        .logout-btn-container { text-align: right; margin-top: 0.75rem; }
-        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: background 0.2s; }
-        .logout-btn:hover { background: rgba(239, 68, 68, 0.3); }
+        .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+        .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -845,7 +908,7 @@ def serve_mobile_frontend():
             <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
         </div>
 
-        <!-- CLIENT: REWARDS TAB WITH SIGN IN, REGISTER & FORGOT PIN RECOVERY -->
+        <!-- CLIENT: REWARDS TAB WITH RECOVERY & PASSWORD CHANGE -->
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <div class="auth-sub-toggle">
@@ -878,15 +941,16 @@ def serve_mobile_frontend():
                     <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;">Register & Create Account</button>
                 </div>
 
-                <!-- RECOVER FORM -->
+                <!-- RECOVER FORM WITH NEW PASSWORD RESET -->
                 <div id="form-recover" class="hidden">
-                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--primary);">Recover via PIN</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.85rem;">Enter your phone and your 4-digit registration PIN to sign in.</p>
+                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--primary);">PIN Recovery & Reset</h3>
                     <label>Phone Number</label>
                     <input type="tel" id="recover-phone" placeholder="e.g., 0612345678" />
                     <label>4-Digit Recovery PIN</label>
                     <input type="password" id="recover-pin" placeholder="e.g., 1234" maxlength="4" />
-                    <button class="btn-main" onclick="recoverCustomer()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; margin-top: 0.5rem;">Verify PIN & Login</button>
+                    <label>New Password</label>
+                    <input type="password" id="recover-new-pass" placeholder="Enter new password" />
+                    <button class="btn-main" onclick="recoverCustomer()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; margin-top: 0.5rem;">Reset Password & Login ✓</button>
                     <div style="text-align: center; margin-top: 0.75rem;">
                         <a onclick="switchAuthMode('signin')" style="font-size: 0.75rem; color: var(--text-muted); cursor: pointer;">Back to Sign In</a>
                     </div>
@@ -918,7 +982,8 @@ def serve_mobile_frontend():
                     ⭐ Leave Google Review (+50 Points)
                 </a>
 
-                <div class="logout-btn-container">
+                <div class="dashboard-actions">
+                    <button class="dash-action-btn" onclick="openClientPasswordModal()">🔒 Change Password</button>
                     <button class="logout-btn" onclick="logoutCustomer()">🚪 Log Out</button>
                 </div>
             </div>
@@ -1079,7 +1144,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 7. SETTINGS -->
+            <!-- 7. SETTINGS WITH OWNER PASSWORD CHANGE -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign & Shift Settings</h3>
@@ -1093,7 +1158,7 @@ def serve_mobile_frontend():
                     <label>Cashback Percentage (%)</label>
                     <input type="number" step="0.5" id="setting-cb-pct" placeholder="e.g. 10" />
 
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
                         <div>
                             <label>Shift Open Time</label>
                             <input type="time" id="setting-open-time" value="07:00" />
@@ -1104,13 +1169,35 @@ def serve_mobile_frontend():
                         </div>
                     </div>
 
-                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem; margin-top: 0.5rem;">Save All Settings ✓</button>
+                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem; margin-bottom: 1rem;">Save Campaign Settings ✓</button>
+
+                    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem;">
+                        <label style="color: var(--primary);">🔒 Change Owner Password</label>
+                        <input type="password" id="admin-old-pass" placeholder="Current Admin Password" />
+                        <input type="password" id="admin-new-pass" placeholder="New Admin Password" />
+                        <button class="btn-main" onclick="changeAdminPassword()" style="background: var(--primary); color: #090d16; padding: 0.6rem; font-size: 0.8rem;">Update Admin Password</button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- MODALS -->
+    <div id="client-password-modal" class="modal">
+        <div class="modal-content">
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Change Password</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Update your account password securely:</p>
+            <label style="text-align: left;">Current Password</label>
+            <input type="password" id="client-old-pass" placeholder="Current password" />
+            <label style="text-align: left;">New Password</label>
+            <input type="password" id="client-new-pass" placeholder="New password" />
+            <label style="text-align: left;">Repeat New Password</label>
+            <input type="password" id="client-repeat-pass" placeholder="Confirm new password" />
+            <button class="btn-main" onclick="submitClientPasswordChange()" style="margin-bottom: 0.5rem; margin-top: 0.5rem;">Save New Password ✓</button>
+            <button class="close-modal" onclick="document.getElementById('client-password-modal').style.display='none'">Cancel</button>
+        </div>
+    </div>
+
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
@@ -1218,6 +1305,29 @@ def serve_mobile_frontend():
             }
         }
 
+        async function changeAdminPassword() {
+            const oldPass = document.getElementById('admin-old-pass').value.trim();
+            const newPass = document.getElementById('admin-new-pass').value.trim();
+            if(!oldPass || !newPass) { showToast('Fill all password fields', true); return; }
+            try {
+                const res = await fetch('/api/admin/change-password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username: 'admin', old_password: oldPass, new_password: newPass })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast(data.message);
+                    document.getElementById('admin-old-pass').value = '';
+                    document.getElementById('admin-new-pass').value = '';
+                } else {
+                    showToast(data.detail || 'Failed to update', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
         async function registerCustomer() {
             const phone = document.getElementById('reg-phone').value.trim();
             const password = document.getElementById('reg-password').value.trim();
@@ -1274,13 +1384,14 @@ def serve_mobile_frontend():
         async function recoverCustomer() {
             const phone = document.getElementById('recover-phone').value.trim();
             const pin = document.getElementById('recover-pin').value.trim();
-            if(!phone || !pin) { showToast('Enter phone and recovery PIN', true); return; }
+            const newPassword = document.getElementById('recover-new-pass').value.trim();
+            if(!phone || !pin || !newPassword) { showToast('Fill all recovery fields', true); return; }
             currentPhone = phone;
             try {
                 const res = await fetch('/api/customer/recover', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: phone, recovery_pin: pin, restaurant_slug: currentSlug })
+                    body: JSON.stringify({ phone_number: phone, recovery_pin: pin, new_password: newPassword, restaurant_slug: currentSlug })
                 });
                 const data = await res.json();
                 if(res.ok) {
@@ -1288,9 +1399,41 @@ def serve_mobile_frontend():
                     document.getElementById('login-section').classList.add('hidden');
                     document.getElementById('dashboard-section').classList.remove('hidden');
                     loadCustomerData();
-                    showToast('PIN verified! Welcome back.');
+                    showToast('Password reset & signed in!');
                 } else {
                     showToast(data.detail || 'Recovery failed', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
+        function openClientPasswordModal() {
+            document.getElementById('client-old-pass').value = '';
+            document.getElementById('client-new-pass').value = '';
+            document.getElementById('client-repeat-pass').value = '';
+            document.getElementById('client-password-modal').style.display = 'flex';
+        }
+
+        async function submitClientPasswordChange() {
+            const oldPass = document.getElementById('client-old-pass').value.trim();
+            const newPass = document.getElementById('client-new-pass').value.trim();
+            const repeatPass = document.getElementById('client-repeat-pass').value.trim();
+            if(!oldPass || !newPass || !repeatPass) { showToast('Fill all fields', true); return; }
+            if(newPass !== repeatPass) { showToast('New passwords do not match', true); return; }
+
+            try {
+                const res = await fetch('/api/customer/change-password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone_number: currentPhone, old_password: oldPass, new_password: newPass, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('client-password-modal').style.display = 'none';
+                    showToast('Password updated successfully!');
+                } else {
+                    showToast(data.detail || 'Update failed', true);
                 }
             } catch(e) {
                 showToast('Connection error', true);
