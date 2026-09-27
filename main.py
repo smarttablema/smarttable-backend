@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.9.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.9.1")
 
 @app.on_event("startup")
 def startup_db():
@@ -574,6 +574,17 @@ def get_analytics_insights(slug: str):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        
+        # Monthly revenue calculation (Current Month vs Previous Month)
+        cur.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE) THEN total_amount ELSE 0 END), 0) as current_month_rev,
+                COALESCE(SUM(CASE WHEN date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE - INTERVAL '1 month') THEN total_amount ELSE 0 END), 0) as prev_month_rev
+            FROM pos_orders 
+            WHERE restaurant_slug = %s;
+        """, (slug,))
+        rev_data = cur.fetchone()
+        
         cur.execute("SELECT phone_number, points_balance, has_purchased FROM customers ORDER BY points_balance DESC LIMIT 5;")
         vips = cur.fetchall()
         
@@ -582,18 +593,28 @@ def get_analytics_insights(slug: str):
         cur.close()
         conn.close()
         
+        curr_rev = float(rev_data["current_month_rev"] or 0)
+        prev_rev = float(rev_data["prev_month_rev"] or 0)
+        
+        if prev_rev > 0:
+            growth_pct = round(((curr_rev - prev_rev) / prev_rev) * 100, 1)
+        else:
+            growth_pct = 100.0 if curr_rev > 0 else 0.0
+
         total_cust = cust_stats["total"] or 1
         buyers = cust_stats["buyers"] or 0
         return_rate = round((buyers / total_cust) * 100, 1)
         
         vip_list = [{"phone": v["phone_number"], "points": v["points_balance"]} for v in vips]
         return {
+            "monthly_revenue": curr_rev,
+            "monthly_growth_percentage": growth_pct,
             "total_customers": total_cust,
             "return_rate": return_rate,
             "vip_spenders": vip_list
         }
     except Exception:
-        return {"total_customers": 0, "return_rate": 0.0, "vip_spenders": []}
+        return {"monthly_revenue": 0.0, "monthly_growth_percentage": 0.0, "total_customers": 0, "return_rate": 0.0, "vip_spenders": []}
 
 @app.get("/api/menu/{slug}")
 def get_menu(slug: str):
@@ -830,7 +851,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH FLOOR MAP & ANALYTICS ---
+# --- FRONTEND UI WITH REORDERED NAV & MONTHLY INSIGHTS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -1128,12 +1149,6 @@ def serve_mobile_frontend():
                 <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
                     <span class="nav-icon">🔥</span><span class="nav-text">Queue</span>
                 </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('floor')" id="sub-btn-floor">
-                    <span class="nav-icon">🪑</span><span class="nav-text">Floor</span>
-                </button>
-                <button class="admin-sub-btn" onclick="switchAdminSub('analytics')" id="sub-btn-analytics">
-                    <span class="nav-icon">📈</span><span class="nav-text">Insights</span>
-                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
                     <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
                 </button>
@@ -1149,6 +1164,12 @@ def serve_mobile_frontend():
                 <button class="admin-sub-btn" onclick="switchAdminSub('pos')" id="sub-btn-pos">
                     <span class="nav-icon">🛒</span><span class="nav-text">POS</span>
                 </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('floor')" id="sub-btn-floor">
+                    <span class="nav-icon">🪑</span><span class="nav-text">Floor</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('analytics')" id="sub-btn-analytics">
+                    <span class="nav-icon">📈</span><span class="nav-text">Insights</span>
+                </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('settings')" id="sub-btn-settings">
                     <span class="nav-icon">⚙️</span><span class="nav-text">Settings</span>
                 </button>
@@ -1161,35 +1182,6 @@ def serve_mobile_frontend():
                     <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Oldest orders dynamically shift Amber / Red</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- FLOOR PLAN VIEW -->
-            <div id="admin-sub-floor" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Live status across restaurant tables</p>
-                    <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; grid-column: span 2;">Loading floor map...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SMART ANALYTICS & CRM -->
-            <div id="admin-sub-analytics" class="admin-section hidden">
-                <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Customer retention and VIP insights</p>
-                    
-                    <div style="background: var(--bg-deep); padding: 12px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem; text-align: center;">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Customer Return Rate</div>
-                        <div id="analytics-return-rate" style="font-size: 1.5rem; font-weight: 800; color: var(--success);">0%</div>
-                    </div>
-
-                    <label>⭐ Top VIP Spenders Leaderboard:</label>
-                    <div id="analytics-vip-list" style="max-height: 150px; overflow-y: auto;">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading VIPs...</div>
                     </div>
                 </div>
             </div>
@@ -1299,6 +1291,46 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
+            <!-- FLOOR PLAN VIEW -->
+            <div id="admin-sub-floor" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Live status across restaurant tables</p>
+                    <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; grid-column: span 2;">Loading floor map...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SMART ANALYTICS & CRM -->
+            <div id="admin-sub-analytics" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Monthly performance and customer retention</p>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem;">
+                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">This Month Revenue</div>
+                            <div id="analytics-monthly-rev" style="font-size: 1.1rem; font-weight: 800; color: var(--success);">0 MAD</div>
+                        </div>
+                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); text-align: center;">
+                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Monthly Growth</div>
+                            <div id="analytics-growth-pct" style="font-size: 1.1rem; font-weight: 800; color: var(--primary);">+0%</div>
+                        </div>
+                    </div>
+
+                    <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 1rem; text-align: center;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Customer Return Rate</div>
+                        <div id="analytics-return-rate" style="font-size: 1.3rem; font-weight: 800; color: var(--accent);">0%</div>
+                    </div>
+
+                    <label>⭐ Top VIP Spenders Leaderboard:</label>
+                    <div id="analytics-vip-list" style="max-height: 130px; overflow-y: auto;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading VIPs...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 7. SETTINGS -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
@@ -1353,7 +1385,6 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <!-- CLEAR REPORTS SECURE MODAL -->
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
@@ -1718,7 +1749,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'floor', 'analytics', 'menu', 'reports', 'rewards', 'cashback', 'pos', 'settings'].forEach(s => {
+            ['queue', 'menu', 'reports', 'rewards', 'cashback', 'pos', 'floor', 'analytics', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -1951,7 +1982,15 @@ def serve_mobile_frontend():
             try {
                 const res = await fetch('/api/admin/' + currentSlug + '/analytics');
                 const data = await res.json();
+                document.getElementById('analytics-monthly-rev').innerText = data.monthly_revenue.toFixed(2) + ' MAD';
+                
+                const growthEl = document.getElementById('analytics-growth-pct');
+                const growthVal = data.monthly_growth_percentage;
+                growthEl.innerText = (growthVal >= 0 ? '+' : '') + growthVal + '%';
+                growthEl.style.color = growthVal >= 0 ? 'var(--success)' : 'var(--danger)';
+
                 document.getElementById('analytics-return-rate').innerText = data.return_rate + '%';
+                
                 const vipContainer = document.getElementById('analytics-vip-list');
                 if(!data.vip_spenders || data.vip_spenders.length === 0) {
                     vipContainer.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No VIP customers yet.</div>';
