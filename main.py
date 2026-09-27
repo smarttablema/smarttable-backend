@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.5.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.6.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -296,6 +296,24 @@ def change_customer_password(data: CustomerPasswordChange):
         cur.close()
         conn.close()
         return {"status": "success", "message": "Password changed successfully!"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/customer/refresh-balance/{phone}")
+def refresh_customer_balance(phone: str):
+    clean_phone = normalize_phone(phone)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT points_balance FROM customers WHERE phone_number = %s;", (clean_phone,))
+        customer = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found.")
+        return {"status": "success", "points_balance": customer["points_balance"]}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -778,7 +796,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL, HIGH-CONTRAST QUEUE URGENCY STYLING ---
+# --- FRONTEND UI WITH CLIENT BALANCE REFRESH BUTTON & QUEUE URGENCY STYLING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -830,11 +848,14 @@ def serve_mobile_frontend():
         
         .hidden { display: none !important; }
         
-        .points-display { text-align: center; padding: 0.2rem 0; }
-        .points-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+        .points-display { text-align: center; padding: 0.2rem 0; position: relative; }
+        .points-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
         .points-number { font-size: 2.75rem; font-weight: 800; color: var(--success); letter-spacing: -1px; margin: 0.2rem 0; }
         .tier-badge { display: inline-block; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; }
         .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
+
+        .refresh-balance-btn { background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 4px 8px; border-radius: 8px; font-size: 0.68rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: background 0.2s; vertical-align: middle; margin-left: 6px; }
+        .refresh-balance-btn:hover { background: rgba(56, 189, 248, 0.3); }
 
         .rewards-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto; margin-top: 0.5rem; padding-right: 2px; }
         .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid var(--border); gap: 0.5rem; }
@@ -890,7 +911,6 @@ def serve_mobile_frontend():
         
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
         
-        /* PROFESSIONAL HIGH-VISIBILITY URGENCY STYLING */
         .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 14px; border-radius: 12px; border: 1px solid var(--border); transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         .redemption-card.urgency-normal { border-left-color: var(--success); }
         
@@ -1013,7 +1033,10 @@ def serve_mobile_frontend():
             <div id="dashboard-section" class="card hidden">
                 <div class="points-display">
                     <div class="tier-badge" id="customer-tier-badge">Classic Member</div>
-                    <div class="points-label">Your Balance</div>
+                    <div class="points-label">
+                        Your Balance
+                        <button class="refresh-balance-btn" onclick="triggerRefreshBalance()" title="Refresh balance">🔄 Refresh</button>
+                    </div>
                     <div class="points-number" id="points-val">0</div>
                     <div class="cashback-badge" id="client-cashback-badge">⚡ 10% Bill Cashback Active</div>
                 </div>
@@ -1505,6 +1528,22 @@ def serve_mobile_frontend():
             }
         }
 
+        async function triggerRefreshBalance() {
+            if(!currentPhone) return;
+            try {
+                const res = await fetch('/api/customer/refresh-balance/' + encodeURIComponent(currentPhone));
+                const data = await res.json();
+                if(res.ok) {
+                    document.getElementById('points-val').innerText = data.points_balance;
+                    showToast('Balance updated successfully!');
+                } else {
+                    showToast('Could not refresh balance', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
         function openClientPasswordModal() {
             document.getElementById('client-old-pass').value = '';
             document.getElementById('client-new-pass').value = '';
@@ -1602,7 +1641,10 @@ def serve_mobile_frontend():
             if(tabName === 'rewards') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-rewards').classList.remove('hidden');
-                if(currentPhone) loadCustomerData();
+                if(currentPhone) {
+                    loadCustomerData();
+                    triggerRefreshBalance();
+                }
             } else if(tabName === 'menu') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-menu').classList.remove('hidden');
@@ -1711,6 +1753,7 @@ def serve_mobile_frontend():
                     showToast(`🎉 Order placed for Table ${tableNum}! Sent to kitchen.`);
                     appCart = {};
                     renderAppCart();
+                    triggerRefreshBalance();
                 } else {
                     showToast(data.detail || 'Order failed', true);
                 }
