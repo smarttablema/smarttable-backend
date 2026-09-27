@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="10.6.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.0.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -149,6 +149,8 @@ class POSOrderCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
     items_summary: str
     total_amount: float
+    table_number: str = "1"
+    customer_phone: str = ""
 
 class ReviewReward(BaseModel):
     phone_number: str
@@ -471,14 +473,41 @@ def create_pos_order(data: POSOrderCreate):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # 1. Log order to Z-report revenue table
         cur.execute(
             "INSERT INTO pos_orders (restaurant_slug, items_summary, total_amount) VALUES (%s, %s, %s);",
             (data.restaurant_slug, data.items_summary, data.total_amount)
         )
+
+        # 2. Automatically push order to live redemption queue for owner notification
+        cur.execute(
+            """INSERT INTO redemption_queue 
+               (restaurant_slug, table_number, customer_name, customer_phone, reward_item, security_pin, status) 
+               VALUES (%s, %s, %s, %s, %s, %s, 'pending');""",
+            (data.restaurant_slug, str(data.table_number), "App Guest", data.customer_phone or "Walk-in", f"ORDER: {data.items_summary} ({data.total_amount:.2f} MAD)", "APP")
+        )
+
+        # 3. Automatically process cashback if customer phone is logged in
+        if data.customer_phone:
+            cur.execute("SELECT cashback_percentage FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
+            s = cur.fetchone()
+            cb_rate = float(s["cashback_percentage"]) if s and s["cashback_percentage"] is not None else 10.0
+            earned_points = int(data.total_amount * (cb_rate / 100.0))
+
+            cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.customer_phone,))
+            customer = cur.fetchone()
+            if customer and earned_points > 0:
+                new_balance = customer["points_balance"] + earned_points
+                cur.execute("UPDATE customers SET points_balance = %s, has_purchased = TRUE WHERE phone_number = %s;", (new_balance, data.customer_phone))
+                cur.execute(
+                    "INSERT INTO cashback_audit_log (restaurant_slug, customer_phone, bill_amount, earned_points) VALUES (%s, %s, %s, %s);",
+                    (data.restaurant_slug, data.customer_phone, data.total_amount, earned_points)
+                )
+
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Order confirmed and logged!"}
+        return {"status": "success", "message": "Order submitted and sent to kitchen/owner successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -751,7 +780,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH CLIENT & OWNER PASSWORD CHANGE SETTINGS ---
+# --- FRONTEND UI WITH AUTOMATED APP ORDERING CART & TABLE SELECTION ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -795,8 +824,8 @@ def serve_mobile_frontend():
         .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); position: relative; }
         
         label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        input, textarea { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
-        input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+        input, textarea, select { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
+        input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
         
         .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
         .btn-main:active { transform: scale(0.98); }
@@ -829,13 +858,15 @@ def serve_mobile_frontend():
         .cart-box { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 0.85rem; max-height: 120px; overflow-y: auto; font-size: 0.8rem; }
         .cart-row { display: flex; justify-content: space-between; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 2px; }
 
-        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 360px; overflow-y: auto; padding-right: 2px; }
-        .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; }
-        .menu-img { width: 55px; height: 55px; border-radius: 10px; object-fit: cover; background: var(--surface); }
+        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 280px; overflow-y: auto; padding-right: 2px; margin-bottom: 1rem; }
+        .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; transition: border-color 0.2s; }
+        .menu-card:hover { border-color: var(--accent); }
+        .menu-img { width: 50px; height: 50px; border-radius: 10px; object-fit: cover; background: var(--surface); }
         .menu-info { flex: 1; }
-        .menu-name { font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
-        .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
-        .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
+        .menu-name { font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+        .menu-cat { font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
+        .menu-price { font-size: 0.85rem; font-weight: 800; color: var(--accent); }
+        .add-cart-mini { background: var(--accent); color: #090d16; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 0.75rem; cursor: pointer; }
 
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
         .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 380px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
@@ -905,10 +936,10 @@ def serve_mobile_frontend():
         <!-- CLIENT TABS -->
         <div class="nav-tabs" id="client-nav">
             <button class="tab-btn active" onclick="switchTab('rewards')">🏆 Rewards</button>
-            <button class="tab-btn" onclick="switchTab('menu')">📖 Menu</button>
+            <button class="tab-btn" onclick="switchTab('menu')">📖 Menu & Order</button>
         </div>
 
-        <!-- CLIENT: REWARDS TAB WITH RECOVERY & PASSWORD CHANGE -->
+        <!-- CLIENT: REWARDS TAB -->
         <div id="tab-rewards" class="client-view">
             <div id="login-section" class="card">
                 <div class="auth-sub-toggle">
@@ -941,7 +972,7 @@ def serve_mobile_frontend():
                     <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;">Register & Create Account</button>
                 </div>
 
-                <!-- RECOVER FORM WITH NEW PASSWORD RESET -->
+                <!-- RECOVER FORM -->
                 <div id="form-recover" class="hidden">
                     <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--primary);">PIN Recovery & Reset</h3>
                     <label>Phone Number</label>
@@ -989,16 +1020,38 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- CLIENT: MENU TAB -->
+        <!-- CLIENT: MENU & AUTOMATED ORDERING TAB -->
         <div id="tab-menu" class="client-view hidden">
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">Live Menu</h3>
-                    <span style="font-size: 0.7rem; color: var(--text-muted);">Tap to zoom</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);">📖 Interactive Menu & Order</h3>
+                    <div style="width: 110px;">
+                        <label style="font-size: 0.6rem; margin-bottom: 2px;">Table #</label>
+                        <select id="app-table-num" style="padding: 4px 8px; font-size: 0.8rem; margin-bottom: 0;">
+                            <option value="1">Table 1</option>
+                            <option value="2">Table 2</option>
+                            <option value="3">Table 3</option>
+                            <option value="4">Table 4</option>
+                            <option value="VIP">VIP Table</option>
+                        </select>
+                    </div>
                 </div>
+
                 <div id="menu-container" class="menu-grid">
                     <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
                 </div>
+
+                <label>🛒 Your App Order Cart:</label>
+                <div id="app-cart-box" class="cart-box">
+                    <div style="text-align: center; color: var(--text-muted);">Cart is empty. Tap items above to add!</div>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-weight: 800; font-size: 0.95rem;">
+                    <span>Total Bill:</span>
+                    <span id="app-total-val" style="color: var(--accent);">0.00 MAD</span>
+                </div>
+
+                <button class="btn-main" onclick="submitAppOrder()" style="background: var(--success); color: white; padding: 0.75rem; font-size: 0.9rem;">Place App Order & Earn Cashback ✓</button>
             </div>
         </div>
 
@@ -1031,10 +1084,10 @@ def serve_mobile_frontend():
             <!-- 1. QUEUE -->
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Redemption Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Active redemptions with customer names</p>
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Orders & Redemptions Queue</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Real-time orders placed from app & reward redemptions</p>
                     <div id="admin-queue-container" class="queue-grid">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No pending redemptions right now.</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
                     </div>
                 </div>
             </div>
@@ -1144,7 +1197,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 7. SETTINGS WITH OWNER PASSWORD CHANGE -->
+            <!-- 7. SETTINGS -->
             <div id="admin-sub-settings" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign & Shift Settings</h3>
@@ -1242,6 +1295,7 @@ def serve_mobile_frontend():
         const currentSlug = 'default-restaurant';
         let selectedRewardId = null;
         let posCart = {};
+        let appCart = {};
         let menuItemsCache = [];
         
         window.onload = function() {
@@ -1530,6 +1584,95 @@ def serve_mobile_frontend():
             if(subName === 'reports') loadDailyReport();
         }
 
+        async function loadMenu() {
+            try {
+                const res = await fetch('/api/menu/' + currentSlug);
+                menuItemsCache = await res.json();
+                const container = document.getElementById('menu-container');
+                if(!menuItemsCache || menuItemsCache.length === 0) {
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding: 2rem 0;">No items available.</div>';
+                    return;
+                }
+                container.innerHTML = menuItemsCache.map(item => `
+                    <div class="menu-card">
+                        <img src="${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}" class="menu-img" onclick="openModal('${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')" />
+                        <div class="menu-info" onclick="openModal('${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')">
+                            <div class="menu-cat">${item.category}</div>
+                            <div class="menu-name">${item.name}</div>
+                            <div class="menu-price">${item.price}</div>
+                        </div>
+                        <button class="add-cart-mini" onclick="addToAppCart(${item.id})">+ Add</button>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        function addToAppCart(id) {
+            const item = menuItemsCache.find(i => i.id === id);
+            if(!item) return;
+            if(!appCart[id]) {
+                appCart[id] = { name: item.name, priceNum: parseFloat(item.price) || 50, qty: 0 };
+            }
+            appCart[id].qty++;
+            renderAppCart();
+            showToast(`Added ${item.name} to cart`);
+        }
+
+        function renderAppCart() {
+            const box = document.getElementById('app-cart-box');
+            const keys = Object.keys(appCart);
+            if(keys.length === 0) {
+                box.innerHTML = '<div style="text-align: center; color: var(--text-muted);">Cart is empty. Tap items above to add!</div>';
+                document.getElementById('app-total-val').innerText = '0.00 MAD';
+                return;
+            }
+            let total = 0;
+            box.innerHTML = keys.map(k => {
+                const c = appCart[k];
+                const lineTotal = c.priceNum * c.qty;
+                total += lineTotal;
+                return `<div class="cart-row"><span>${c.qty}x ${c.name}</span><span>${lineTotal.toFixed(2)} MAD</span></div>`;
+            }).join('');
+            document.getElementById('app-total-val').innerText = total.toFixed(2) + ' MAD';
+        }
+
+        async function submitAppOrder() {
+            const keys = Object.keys(appCart);
+            if(keys.length === 0) { showToast('Your order cart is empty!', true); return; }
+            const tableNum = document.getElementById('app-table-num').value;
+            let summaryParts = [];
+            let total = 0;
+            keys.forEach(k => {
+                const c = appCart[k];
+                summaryParts.push(`${c.qty}x ${c.name}`);
+                total += c.priceNum * c.qty;
+            });
+
+            try {
+                const res = await fetch('/api/admin/pos/order', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        restaurant_slug: currentSlug,
+                        items_summary: summaryParts.join(', '),
+                        total_amount: total,
+                        table_number: tableNum,
+                        customer_phone: currentPhone
+                    })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast('🎉 Order placed successfully! Sent to kitchen.');
+                    appCart = {};
+                    renderAppCart();
+                } else {
+                    showToast(data.detail || 'Order failed', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
         async function loadPOSMenu() {
             try {
                 const res = await fetch('/api/menu/' + currentSlug);
@@ -1591,7 +1734,7 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/admin/pos/order', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ restaurant_slug: currentSlug, items_summary: summaryParts.join(', '), total_amount: total })
+                    body: JSON.stringify({ restaurant_slug: currentSlug, items_summary: summaryParts.join(', '), total_amount: total, table_number: 'Counter', customer_phone: '' })
                 });
                 if(res.ok) {
                     showToast('Order confirmed and logged!');
@@ -1697,7 +1840,7 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 const container = document.getElementById('admin-queue-container');
                 if(!data.queue || data.queue.length === 0) {
-                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending redemptions.</div>';
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
                     return;
                 }
                 container.innerHTML = data.queue.map(item => `
@@ -1706,10 +1849,10 @@ def serve_mobile_frontend():
                             <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
                             <span style="font-size: 0.65rem; color: var(--text-muted);">${item.time}</span>
                         </div>
-                        <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 Customer: ${item.customer_name}</div>
+                        <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
                         <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
-                        <div class="pin-display">PIN: ${item.security_pin}</div>
-                        <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem;">Mark Handed Out ✓</button>
+                        ${item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : '<div style="font-size: 0.7rem; color: var(--success); font-weight: 700; margin: 4px 0;">⚡ App Order - Automatic Cashback Applied</div>'}
+                        <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
                     </div>
                 `).join('');
             } catch(e) {}
@@ -1717,30 +1860,8 @@ def serve_mobile_frontend():
 
         async function fulfillRedemption(id) {
             await fetch('/api/admin/redemptions/fulfill/' + id, { method: 'POST' });
-            showToast('Reward fulfilled!');
+            showToast('Order/Redemption marked fulfilled!');
             loadAdminQueue();
-        }
-
-        async function loadMenu() {
-            try {
-                const res = await fetch('/api/menu/' + currentSlug);
-                const items = await res.json();
-                const container = document.getElementById('menu-container');
-                if(!items || items.length === 0) {
-                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding: 2rem 0;">No items available.</div>';
-                    return;
-                }
-                container.innerHTML = items.map(item => `
-                    <div class="menu-card" onclick="openModal('${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}', '${item.name.replace(/'/g, "\\\\'")}', '${item.price}')">
-                        <img src="${item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500'}" class="menu-img" />
-                        <div class="menu-info">
-                            <div class="menu-cat">${item.category}</div>
-                            <div class="menu-name">${item.name}</div>
-                            <div class="menu-price">${item.price}</div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch(e) {}
         }
 
         async function loadCustomerData() {
@@ -1842,6 +1963,7 @@ def serve_mobile_frontend():
             document.getElementById('admin-img').value = '';
             loadAdminMenu();
             loadPOSMenu();
+            loadMenu();
         }
 
         async function loadAdminMenu() {
@@ -1862,6 +1984,7 @@ def serve_mobile_frontend():
             await fetch('/api/admin/menu/' + id, { method: 'DELETE' });
             loadAdminMenu();
             loadPOSMenu();
+            loadMenu();
             showToast('Item removed.');
         }
 
