@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.7.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.8.0")
 
 # --- INITIALIZE DATABASE TABLES INCLUDING SECURITY & QUEUES ---
 @app.on_event("startup")
@@ -856,7 +856,6 @@ def serve_mobile_frontend():
                 loadAdminMenu();
                 loadAdminRewards();
                 loadAdminTiers();
-                // Auto-poll live redemption queue every 5 seconds for Friday rush
                 setInterval(loadAdminQueue, 5000);
             } else {
                 loadMenu();
