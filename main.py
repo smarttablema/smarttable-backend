@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="9.2.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="9.3.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -129,9 +129,8 @@ def authenticate_customer(data: CustomerAuth):
 
 @app.post("/api/admin/cashback/process")
 def process_cashback(data: CashbackProcess):
-    """Calculates 10% bill cashback in points and credits the customer account."""
     try:
-        earned_points = int(data.bill_amount * 0.10) # 10% cashback value in points
+        earned_points = int(data.bill_amount * 0.10)
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (data.phone_number,))
@@ -527,7 +526,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FULL UI WITH CASHBACK POS & CUSTOMER NAME PROMPT ---
+# --- WORLD-CLASS SAAS UI WITH CUSTOM POLISHED MODALS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -604,11 +603,12 @@ def serve_mobile_frontend():
         .menu-cat { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
         .menu-price { font-size: 0.9rem; font-weight: 800; color: var(--accent); }
 
+        /* Professional Modals */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
         .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 360px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        .modal-img { width: 100%; height: 200px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
-        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; }
+        .modal-img { width: 100%; height: 160px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
+        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; margin-top: 0.5rem; }
         .close-modal:hover { background: var(--danger); }
 
         .voucher-code-box { font-size: 2.2rem; font-weight: 800; color: var(--accent); background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px dashed var(--accent); margin: 0.75rem 0; letter-spacing: 2px; }
@@ -811,6 +811,17 @@ def serve_mobile_frontend():
         </div>
     </div>
 
+    <!-- CUSTOM REDEMPTION NAME MODAL -->
+    <div id="redeem-name-modal" class="modal">
+        <div class="modal-content">
+            <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Claim Reward</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Please enter your name for the waiter / cashier:</p>
+            <input type="text" id="customer-name-input" placeholder="e.g., Mohammed Daou" style="margin-bottom: 1rem;" />
+            <button class="btn-main" onclick="confirmRedeem()" style="margin-bottom: 0.5rem;">Confirm & Get PIN</button>
+            <button class="close-modal" onclick="document.getElementById('redeem-name-modal').style.display='none'">Cancel</button>
+        </div>
+    </div>
+
     <!-- VOUCHER MODAL -->
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
@@ -828,7 +839,7 @@ def serve_mobile_frontend():
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
             <h3 id="modal-title" style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem; color: var(--text-main);"></h3>
-            <div id="modal-price" style="font-size: 1rem; font-weight: 800; color: var(--accent); margin-bottom: 1.25rem;"></div>
+            <div id="modal-price" style="font-size: 1rem; font-weight: 800; color: var(--accent); margin-bottom: 0.5rem;"></div>
             <button class="close-modal" onclick="closeModal()">Close Preview</button>
         </div>
     </div>
@@ -836,6 +847,7 @@ def serve_mobile_frontend():
     <script>
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
+        let selectedRewardId = null;
         let cachedCustomers = [];
         let currentReviewPts = 50;
         let currentReferralPts = 50;
@@ -1069,7 +1081,7 @@ def serve_mobile_frontend():
                                 <div class="reward-title">${r.title}</div>
                                 <div class="reward-cost">${r.points_required} pts</div>
                             </div>
-                            <button class="redeem-btn" onclick="promptRedeem(${r.id})">Redeem</button>
+                            <button class="redeem-btn" onclick="openRedeemModal(${r.id})">Redeem</button>
                         </div>
                     `;
                 }).join('');
@@ -1078,20 +1090,30 @@ def serve_mobile_frontend():
             }
         }
 
-        async function promptRedeem(rewardId) {
-            const customerName = prompt("Please enter your name for the waiter / cashier:", "Guest");
-            if(customerName === null) return; // User cancelled
-            
+        function openRedeemModal(rewardId) {
+            selectedRewardId = rewardId;
+            document.getElementById('customer-name-input').value = '';
+            document.getElementById('redeem-name-modal').style.display = 'flex';
+        }
+
+        async function confirmRedeem() {
+            const customerName = document.getElementById('customer-name-input').value.trim();
+            if(!customerName) {
+                showToast('Please enter your name.', true);
+                return;
+            }
+            document.getElementById('redeem-name-modal').style.display = 'none';
+
             try {
                 const res = await fetch('/api/rewards/redeem', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ 
                         phone_number: currentPhone, 
-                        reward_id: rewardId, 
+                        reward_id: selectedRewardId, 
                         restaurant_slug: currentSlug,
                         table_number: "1",
-                        customer_name: customerName || "Guest"
+                        customer_name: customerName
                     })
                 });
                 const data = await res.json();
