@@ -12,7 +12,52 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.6.0")
+app = FastAPI(title="SmartTable.ma SaaS Engine", version="8.7.0")
+
+# --- INITIALIZE DATABASE TABLES INCLUDING SECURITY & QUEUES ---
+@app.on_event("startup")
+def startup_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # 1. Pending Referrals Table (First-Purchase Lock Security)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_referrals (
+            id SERIAL PRIMARY KEY,
+            referrer_phone VARCHAR(20),
+            referred_phone VARCHAR(20) UNIQUE,
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # 2. Redemption Queue Table (Friday Rush Cashier View)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS redemption_queue (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50),
+            table_number VARCHAR(20),
+            customer_name VARCHAR(100),
+            customer_phone VARCHAR(20),
+            reward_item VARCHAR(100),
+            security_pin VARCHAR(4),
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # 3. Active Vouchers Table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS active_vouchers (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(10),
+            phone_number VARCHAR(20),
+            reward_title VARCHAR(100),
+            image_url TEXT,
+            status VARCHAR(20) DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 class CustomerAuth(BaseModel):
     phone_number: str
@@ -295,6 +340,8 @@ def redeem_reward(data: dict):
     phone = data.get("phone_number")
     reward_id = data.get("reward_id")
     slug = data.get("restaurant_slug", "default-restaurant")
+    table_number = data.get("table_number", "1")
+    customer_name = data.get("customer_name", "Guest")
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -317,9 +364,20 @@ def redeem_reward(data: dict):
         new_balance = customer["points_balance"] - cost
         cur.execute("UPDATE customers SET points_balance = %s WHERE phone_number = %s;", (new_balance, phone))
         
+        # Secure 4-digit PIN for Cashier Redemption Queue
         v_code = str(random.randint(1000, 9999))
         
+        # 1. Insert into active vouchers
         cur.execute("INSERT INTO active_vouchers (code, phone_number, reward_title, image_url) VALUES (%s, %s, %s, %s);", (v_code, phone, title, img))
+        
+        # 2. Insert into Live Cashier Redemption Queue
+        cur.execute(
+            """INSERT INTO redemption_queue 
+               (restaurant_slug, table_number, customer_name, customer_phone, reward_item, security_pin) 
+               VALUES (%s, %s, %s, %s, %s, %s);""",
+            (slug, str(table_number), customer_name, phone, title, v_code)
+        )
+        
         conn.commit()
         cur.close()
         conn.close()
@@ -327,6 +385,51 @@ def redeem_reward(data: dict):
         return {"status": "success", "new_balance": new_balance, "voucher_code": v_code, "reward_title": title, "image_url": img}
     except HTTPException as he:
         raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/{slug}/redemptions")
+async def get_redemption_queue(slug: str):
+    """Fetches active pending redemptions for the cashier dashboard."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, table_number, customer_name, reward_item, security_pin, created_at 
+               FROM redemption_queue 
+               WHERE restaurant_slug = %s AND status = 'pending' 
+               ORDER BY created_at ASC;""",
+            (slug,)
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        queue = []
+        for r in rows:
+            queue.append({
+                "id": r["id"],
+                "table_number": r["table_number"],
+                "customer_name": r["customer_name"],
+                "reward_item": r["reward_item"],
+                "security_pin": r["security_pin"],
+                "time": r["created_at"].strftime("%H:%M:%S")
+            })
+        return {"queue": queue}
+    except Exception:
+        return {"queue": []}
+
+@app.post("/api/admin/redemptions/fulfill/{redemption_id}")
+async def fulfill_redemption(redemption_id: int):
+    """Marks a redemption card as fulfilled by the cashier."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE redemption_queue SET status = 'fulfilled' WHERE id = %s;", (redemption_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Reward marked as fulfilled."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -393,14 +496,21 @@ def refer_friend(data: ReferralCreate):
         cur.execute("SELECT * FROM customers WHERE phone_number = %s;", (clean_friend,))
         if cur.fetchone():
             raise HTTPException(status_code=400, detail="This friend already has an account.")
+        
+        # 1. Register customer in pending state (First-Purchase Lock Security)
         cur.execute(
             "INSERT INTO customers (phone_number, points_balance, referred_by, has_purchased) VALUES (%s, 0, %s, FALSE);",
             (clean_friend, data.referrer_phone)
         )
+        # 2. Insert into pending referrals table
+        cur.execute(
+            "INSERT INTO pending_referrals (referrer_phone, referred_phone) VALUES (%s, %s) ON CONFLICT (referred_phone) DO NOTHING;",
+            (data.referrer_phone, clean_friend)
+        )
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Friend registered successfully!"}
+        return {"status": "success", "message": "Friend registered! Referral reward will unlock upon their first table purchase."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -502,11 +612,16 @@ def serve_mobile_frontend():
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
 
         /* Perfectly Aligned Enterprise Icon Grid Sub-nav */
-        .admin-subnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: var(--bg-deep); padding: 6px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
-        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.62rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
-        .admin-sub-btn span.nav-icon { font-size: 1.15rem; margin-bottom: 2px; display: block; line-height: 1; }
+        .admin-subnav { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; background: var(--bg-deep); padding: 6px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.58rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 1.1rem; margin-bottom: 2px; display: block; line-height: 1; }
         .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        
+        /* Friday Rush Live Queue Grid */
+        .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
+        .redemption-card { background: var(--bg-deep); border-left: 4px solid var(--accent); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+        .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
     </style>
 </head>
 <body>
@@ -575,9 +690,12 @@ def serve_mobile_frontend():
 
         <!-- OWNER CONTROL CENTER (PRO DASHBOARD) -->
         <div id="tab-admin" class="hidden">
-            <!-- Perfectly Aligned Icon Grid Sub-nav (Menu, Rewards, Tiers, Broadcast, Settings) -->
+            <!-- Icon Grid Sub-nav including Live Queue -->
             <div class="admin-subnav">
-                <button class="admin-sub-btn active" onclick="switchAdminSub('menu')" id="sub-btn-menu">
+                <button class="admin-sub-btn active" onclick="switchAdminSub('queue')" id="sub-btn-queue">
+                    <span class="nav-icon">🔥</span><span class="nav-text">Queue</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('menu')" id="sub-btn-menu">
                     <span class="nav-icon">📖</span><span class="nav-text">Menu</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
@@ -594,8 +712,19 @@ def serve_mobile_frontend():
                 </button>
             </div>
 
+            <!-- 0. LIVE CASHIER REDEMPTION QUEUE -->
+            <div id="admin-sub-queue" class="admin-section">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Redemption Queue</h3>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Friday rush priority redemptions (auto-polls every 5s)</p>
+                    <div id="admin-queue-container" class="queue-grid">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No pending redemptions right now. All quiet!</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 1. MENU EDITOR -->
-            <div id="admin-sub-menu" class="admin-section">
+            <div id="admin-sub-menu" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
                     <label>Category</label>
@@ -689,7 +818,7 @@ def serve_mobile_frontend():
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
             <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted);">Show this code to your waiter:</p>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">Show this 4-digit PIN to your waiter:</p>
             <div id="modal-voucher-code" class="voucher-code-box">----</div>
             <img id="modal-voucher-img" class="modal-img" src="" style="height: 130px; margin-bottom: 0.5rem;" />
             <div id="modal-voucher-title" style="font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 1rem;"></div>
@@ -722,10 +851,13 @@ def serve_mobile_frontend():
                 document.getElementById('tab-rewards').classList.add('hidden');
                 document.getElementById('tab-admin').classList.remove('hidden');
                 document.getElementById('app-subtitle').innerText = "Owner Control Center";
+                loadAdminQueue();
                 loadAdminCustomers();
                 loadAdminMenu();
                 loadAdminRewards();
                 loadAdminTiers();
+                // Auto-poll live redemption queue every 5 seconds for Friday rush
+                setInterval(loadAdminQueue, 5000);
             } else {
                 loadMenu();
             }
@@ -803,7 +935,7 @@ def serve_mobile_frontend():
         }
 
         function switchAdminSub(subName) {
-            ['menu', 'rewards', 'tiers', 'campaigns', 'settings'].forEach(s => {
+            ['queue', 'menu', 'rewards', 'tiers', 'campaigns', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -813,6 +945,45 @@ def serve_mobile_frontend():
             const targetSec = document.getElementById('admin-sub-' + subName);
             if(targetBtn) targetBtn.classList.add('active');
             if(targetSec) targetSec.classList.remove('hidden');
+            if(subName === 'queue') loadAdminQueue();
+        }
+
+        async function loadAdminQueue() {
+            try {
+                const res = await fetch('/api/admin/' + currentSlug + '/redemptions');
+                const data = await res.json();
+                const container = document.getElementById('admin-queue-container');
+                if(!data.queue || data.queue.length === 0) {
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending redemptions right now.</div>';
+                    return;
+                }
+                container.innerHTML = data.queue.map(item => `
+                    <div class="redemption-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
+                            <span style="font-size: 0.65rem; color: var(--text-muted);">${item.time}</span>
+                        </div>
+                        <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Customer: ${item.customer_name} (${item.customer_phone || 'Client'})</div>
+                        <div class="pin-display">PIN: ${item.security_pin}</div>
+                        <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem;">Mark Handed Out ✓</button>
+                    </div>
+                `).join('');
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        async function fulfillRedemption(id) {
+            try {
+                const res = await fetch('/api/admin/redemptions/fulfill/' + id, { method: 'POST' });
+                if(res.ok) {
+                    showToast('Reward fulfilled!');
+                    loadAdminQueue();
+                }
+            } catch(e) {
+                showToast('Error fulfilling reward', true);
+            }
         }
 
         async function loadAdminCustomers() {
@@ -849,7 +1020,7 @@ def serve_mobile_frontend():
         function sendWhatsAppBroadcast() {
             const msg = document.getElementById('broadcast-msg-input').value.trim();
             if(!msg) { showToast('Please enter a broadcast message.', true); return; }
-            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\\n\\n" + msg);
+            const encoded = encodeURIComponent("📢 *SmartTable Announcement*:\n\n" + msg);
             window.open("https://api.whatsapp.com/send?text=" + encoded, "_blank");
             showToast('Opening WhatsApp Broadcast...');
         }
@@ -929,7 +1100,13 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/rewards/redeem', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone_number: currentPhone, reward_id: rewardId, restaurant_slug: currentSlug })
+                    body: JSON.stringify({ 
+                        phone_number: currentPhone, 
+                        reward_id: rewardId, 
+                        restaurant_slug: currentSlug,
+                        table_number: "1",
+                        customer_name: "Customer " + currentPhone.slice(-4)
+                    })
                 });
                 const data = await res.json();
                 if(res.ok) {
@@ -1165,8 +1342,8 @@ def serve_mobile_frontend():
 
         async function loginCustomer() {
             const phone = document.getElementById('phone-input').value.trim();
-            const clean = phone.replace(/[\\s\\-\\(\\)]/g, '');
-            const globalRegex = /^\\+?\\d{8,15}$/;
+            const clean = phone.replace(/[\s\-\(\)]/g, '');
+            const globalRegex = /^\+?\d{8,15}$/;
             if(!globalRegex.test(clean)) {
                 showToast('Please enter a valid mobile number (8 to 15 digits)', true);
                 return;
@@ -1211,8 +1388,8 @@ def serve_mobile_frontend():
 
         async function referFriend() {
             const friendPhone = document.getElementById('friend-phone').value.trim();
-            const cleanFriend = friendPhone.replace(/[\\s\\-\\(\\)]/g, '');
-            const globalRegex = /^\\+?\\d{8,15}$/;
+            const cleanFriend = friendPhone.replace(/[\s\-\(\)]/g, '');
+            const globalRegex = /^\+?\d{8,15}$/;
             if(!globalRegex.test(cleanFriend)) {
                 showToast('Please enter a valid friend mobile number', true);
                 return;
