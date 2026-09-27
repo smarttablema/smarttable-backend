@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.4.0")
+app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.5.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -778,7 +778,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH FIXED REWARD ID & TIME-SENSITIVE QUEUE URGENCY COLORING ---
+# --- FRONTEND UI WITH PROFESSIONAL, HIGH-CONTRAST QUEUE URGENCY STYLING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -890,11 +890,27 @@ def serve_mobile_frontend():
         
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
         
-        /* URGENCY COLORING FOR LIVE QUEUE */
-        .redemption-card { background: var(--bg-deep); border-left: 4px solid var(--accent); padding: 12px; border-radius: 10px; border: 1px solid var(--border); transition: all 0.3s ease; }
+        /* PROFESSIONAL HIGH-VISIBILITY URGENCY STYLING */
+        .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 14px; border-radius: 12px; border: 1px solid var(--border); transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         .redemption-card.urgency-normal { border-left-color: var(--success); }
-        .redemption-card.urgency-orange { border-left-color: #f97316; background: rgba(249, 115, 22, 0.05); }
-        .redemption-card.urgency-red { border-left-color: var(--danger); background: rgba(239, 68, 68, 0.08); box-shadow: 0 0 15px rgba(239, 68, 68, 0.25); }
+        
+        .redemption-card.urgency-orange { 
+            border-left-color: #f97316; 
+            background: linear-gradient(135deg, rgba(249, 115, 22, 0.12) 0%, rgba(26, 38, 66, 0.95) 100%);
+            border-top: 1px solid rgba(249, 115, 22, 0.4);
+            border-right: 1px solid rgba(249, 115, 22, 0.4);
+            border-bottom: 1px solid rgba(249, 115, 22, 0.4);
+            box-shadow: 0 6px 20px rgba(249, 115, 22, 0.18);
+        }
+
+        .redemption-card.urgency-red { 
+            border-left-color: var(--danger); 
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(26, 38, 66, 0.95) 100%);
+            border-top: 1px solid rgba(239, 68, 68, 0.6);
+            border-right: 1px solid rgba(239, 68, 68, 0.6);
+            border-bottom: 1px solid rgba(239, 68, 68, 0.6);
+            box-shadow: 0 8px 25px rgba(239, 68, 68, 0.35);
+        }
 
         .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
         
@@ -1086,7 +1102,7 @@ def serve_mobile_frontend():
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
                     <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚡ Live Orders & Redemptions Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Oldest orders turn Orange / Red for attention</p>
+                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Oldest orders dynamically shift Amber / Red</p>
                     <div id="admin-queue-container" class="queue-grid">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
                     </div>
@@ -1882,19 +1898,23 @@ def serve_mobile_frontend():
 
                     let urgencyClass = 'urgency-normal';
                     let timeBadgeText = `${diffMinutes}m ago`;
+                    let badgeColor = 'var(--text-muted)';
+                    
                     if(diffMinutes >= 5 && diffMinutes < 10) {
                         urgencyClass = 'urgency-orange';
-                        timeBadgeText = `⚠️ ${diffMinutes}m waiting (Attention!)`;
+                        timeBadgeText = `⚠️ ${diffMinutes}m waiting (Attention)`;
+                        badgeColor = '#f97316';
                     } else if(diffMinutes >= 10) {
                         urgencyClass = 'urgency-red';
                         timeBadgeText = `🚨 ${diffMinutes}m waiting (URGENT!)`;
+                        badgeColor = 'var(--danger)';
                     }
 
                     return `
                         <div class="redemption-card ${urgencyClass}">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                                 <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
-                                <span style="font-size: 0.7rem; font-weight: 700; color: ${diffMinutes >= 5 ? 'var(--accent)' : 'var(--text-muted)'};">${timeBadgeText}</span>
+                                <span style="font-size: 0.75rem; font-weight: 800; color: ${badgeColor};">${timeBadgeText}</span>
                             </div>
                             <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
                             <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
