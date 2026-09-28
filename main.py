@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.6.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.6.1")
 
 @app.on_event("startup")
 def startup_db():
@@ -843,7 +843,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL HEADER, FOOTER & MODAL NAVIGATION ---
+# --- FRONTEND UI WITH PROFESSIONAL FOOTER SPACING & MODAL NAVIGATION ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -983,10 +983,10 @@ def serve_mobile_frontend():
         .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.75rem; }
         .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 10px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; text-align: center; margin-bottom: 0.75rem; line-height: 1.4; }
 
-        /* PROFESSIONAL FOOTER BAR: LANGUAGES ON LEFT, SUPPORT ON RIGHT */
-        .app-footer-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-top: 0.85rem; padding: 0 0.25rem; font-size: 0.75rem; color: var(--text-muted); }
-        .app-footer-bar a { color: var(--primary); text-decoration: none; font-weight: 700; }
-        .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
+        /* PROFESSIONAL FOOTER BAR: PERFECT SPACING BETWEEN LANGUAGES & SUPPORT */
+        .app-footer-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-top: 1rem; padding: 0 0.5rem; font-size: 0.75rem; color: var(--text-muted); gap: 1rem; }
+        .app-footer-bar a { color: var(--primary); text-decoration: none; font-weight: 700; white-space: nowrap; }
+        .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 14px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
         .lang-selector:hover { border-color: var(--accent); }
     </style>
 </head>
@@ -1377,7 +1377,7 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <!-- PROFESSIONAL FOOTER: LANGUAGES ON LEFT, SUPPORT ON RIGHT -->
+        <!-- PROFESSIONAL FOOTER BAR: PERFECT SPACING -->
         <div class="app-footer-bar">
             <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
                 <option value="en">🇺🇸 EN</option>
