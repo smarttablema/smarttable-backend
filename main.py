@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.4.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.5.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -843,7 +843,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH FIXED HEADER, AUTHENTIC FLAG EMBLEMS & STAFF CREATOR IN SETTINGS ---
+# --- FRONTEND UI WITH SEPARATE HEADER UTILITIES, FLAG LOGOS & PERFECT SPACING ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -876,10 +876,15 @@ def serve_mobile_frontend():
         
         .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.5rem 1.25rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
-        .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
-        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-        .staff-portal-btn { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: all 0.2s; white-space: nowrap; }
-        .staff-portal-btn:hover { background: rgba(56, 189, 248, 0.22); border-color: var(--primary); }
+        /* TOP UTILITY HEADER BAR SEPARATED OUTSIDE THE CARD */
+        .app-header-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-bottom: 0.85rem; padding: 0 0.25rem; }
+        
+        .lang-selector-wrapper { position: relative; display: inline-block; }
+        .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 7px 14px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
+        .lang-selector:hover { border-color: var(--accent); }
+
+        .staff-portal-pill { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--primary); padding: 7px 14px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: all 0.2s; }
+        .staff-portal-pill:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); transform: translateY(-1px); }
 
         .brand-header { text-align: center; margin-bottom: 0.85rem; }
         .logo { font-size: 1.6rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
@@ -978,8 +983,9 @@ def serve_mobile_frontend():
         .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 7px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
         
-        .forgot-link { text-align: right; margin-top: -0.35rem; margin-bottom: 0.75rem; }
-        .forgot-link a { font-size: 0.7rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
+        /* PERFECTLY SPACED REVERSED ROW FOR FORGOT PASSWORD & STAFF PORTAL */
+        .form-footer-actions { display: flex; justify-content: space-between; align-items: center; margin-top: -0.35rem; margin-bottom: 0.75rem; }
+        .form-footer-actions a, .form-footer-actions span { font-size: 0.75rem; font-weight: 700; cursor: pointer; }
 
         .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
         .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
@@ -1031,16 +1037,17 @@ def serve_mobile_frontend():
         </div>
     </div>
 
-    <div class="app-frame">
-        <div class="top-utility-bar">
-            <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
-                <option value="en">🇺🇸 EN</option>
-                <option value="fr">🇫🇷 FR</option>
-                <option value="ar">🇲🇦 AR</option>
-            </select>
-            <a href="/?mode=worker" class="staff-portal-btn" id="nav-staff-login">🔒 Staff Portal</a>
-        </div>
+    <!-- EXTERNAL TOP UTILITY BAR (SEPARATED CLEANLY OUTSIDE CARD) -->
+    <div class="app-header-bar">
+        <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
+            <option value="en">🇺🇸 English (EN)</option>
+            <option value="fr">🇫🇷 Français (FR)</option>
+            <option value="ar">🇲🇦 العربية (AR)</option>
+        </select>
+        <a href="/?mode=worker" class="staff-portal-pill" id="nav-staff-login">🔒 Staff Portal</a>
+    </div>
 
+    <div class="app-frame">
         <div class="brand-header">
             <div class="logo">smart<span>Table</span></div>
             <div class="brand-tag" id="app-subtitle">Enterprise POS & Loyalty</div>
@@ -1067,9 +1074,13 @@ def serve_mobile_frontend():
                     <input type="tel" id="signin-phone" placeholder="e.g., 0612345678" />
                     <label id="lbl-password">Password</label>
                     <input type="password" id="signin-password" placeholder="Your password" />
-                    <div class="forgot-link">
-                        <a onclick="switchAuthMode('recover')" id="txt-forgot">Forgot Password?</a>
+                    
+                    <!-- REVERSED FOOTER ROW: FORGOT PASSWORD & STAFF PORTAL LINK WITH LOTS OF SPACE -->
+                    <div class="form-footer-actions">
+                        <a onclick="switchAuthMode('recover')" id="txt-forgot" style="color: var(--primary);">Forgot Password?</a>
+                        <a href="/?mode=worker" style="color: var(--accent); text-decoration: none;" id="txt-staff-inline">🔒 Staff Portal</a>
                     </div>
+
                     <button class="btn-main" onclick="loginCustomer()" id="btn-signin-action">Sign In to Account</button>
                 </div>
 
@@ -1468,6 +1479,7 @@ def serve_mobile_frontend():
                 phoneNum: "Phone Number",
                 password: "Password",
                 forgotPwd: "Forgot Password?",
+                staffInline: "🔒 Staff Portal",
                 signInBtn: "Sign In to Account",
                 createAcc: "Create New Account",
                 regPin: "Recovery PIN (4-Digits for Reset)",
@@ -1515,6 +1527,7 @@ def serve_mobile_frontend():
                 phoneNum: "Numéro de Téléphone",
                 password: "Mot de Passe",
                 forgotPwd: "Mot de passe oublié ?",
+                staffInline: "🔒 Portail Staff",
                 signInBtn: "Se connecter au compte",
                 createAcc: "Créer un Nouveau Compte",
                 regPin: "PIN de Récupération (4 chiffres)",
@@ -1562,6 +1575,7 @@ def serve_mobile_frontend():
                 phoneNum: "رقم الهاتف",
                 password: "كلمة المرور",
                 forgotPwd: "نسيت كلمة المرور؟",
+                staffInline: "🔒 بوابة الموظفين",
                 signInBtn: "تسجيل الدخول للحساب",
                 createAcc: "إنشاء حساب جديد",
                 regPin: "رقم الاسترداد السري (4 أرقام)",
@@ -1594,7 +1608,7 @@ def serve_mobile_frontend():
                 liveQueueTitle: "⚡ قائمة الطلبات الحية والوجبات الجاهزة",
                 posTitle: "🛒 نقطة البيع السريعة للكاشير",
                 posDesc: "حدد الطاولة وأضف الأصناف وعدل الكميات بكل سهولة",
-                posTableLbl: "اختر رقم الطاولة / سفري",
+                posTableLbl: "اختر الطاولة / سفري",
                 posCartLbl: "سلة الطلبات (استخدم + / - للتعديل):",
                 confirmPos: "تأكيد وإرسال الطلب ✓"
             }
@@ -1613,6 +1627,7 @@ def serve_mobile_frontend():
             document.getElementById('tab-btn-rewards').innerText = t.tabRewards;
             document.getElementById('tab-btn-menu').innerText = t.tabMenu;
             document.getElementById('nav-staff-login').innerHTML = '🔒 ' + t.staffLogin;
+            document.getElementById('txt-staff-inline').innerText = t.staffInline;
             document.getElementById('btn-toggle-signin').innerText = t.signIn;
             document.getElementById('btn-toggle-register').innerText = t.register;
             document.getElementById('txt-signin-title').innerText = t.customerSignIn;
