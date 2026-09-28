@@ -168,3 +168,7 @@
     </script>
 </body>
 </html>
+<!-- Professional Contact Footer -->
+<div style="text-align: center; font-size: 0.75rem; color: #94a3b8; margin-top: 1.5rem; border-top: 1px solid #2a3a5e; padding-top: 0.75rem;">
+    Support: <a href="mailto:contact@smarttable.online" style="color: #38bdf8; text-decoration: none; font-weight: 600;">contact@smarttable.online</a>
+</div>
