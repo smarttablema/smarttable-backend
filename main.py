@@ -863,6 +863,23 @@ def serve_mobile_frontend():
     <link rel="icon" type="image/png" href="https://img.icons8.com/color/48/qr-code.png">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+    /* Professional Contact Footer Styling */
+        .app-footer {
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            padding-top: 0.75rem;
+        }
+        .app-footer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .app-footer a:hover {
+            text-decoration: underline;
+        }
         :root {
             --bg-deep: #090d16;
             --surface: #131c31;
@@ -2311,6 +2328,10 @@ def serve_mobile_frontend():
         }
         function closeModal() { document.getElementById('image-modal').style.display = 'none'; }
     </script>
+    <!-- Professional Contact Footer -->
+        <div class="app-footer">
+            Support: <a href="mailto:contact@smarttable.online">contact@smarttable.online</a>
+        </div>
 </body>
 </html>
     """
