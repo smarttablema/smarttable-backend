@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.5.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.6.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -843,7 +843,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH SEPARATE HEADER UTILITIES, FLAG LOGOS & PERFECT SPACING ---
+# --- FRONTEND UI WITH PROFESSIONAL HEADER, FOOTER & MODAL NAVIGATION ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -876,16 +876,6 @@ def serve_mobile_frontend():
         
         .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.5rem 1.25rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
-        /* TOP UTILITY HEADER BAR SEPARATED OUTSIDE THE CARD */
-        .app-header-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-bottom: 0.85rem; padding: 0 0.25rem; }
-        
-        .lang-selector-wrapper { position: relative; display: inline-block; }
-        .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 7px 14px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
-        .lang-selector:hover { border-color: var(--accent); }
-
-        .staff-portal-pill { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--primary); padding: 7px 14px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: all 0.2s; }
-        .staff-portal-pill:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); transform: translateY(-1px); }
-
         .brand-header { text-align: center; margin-bottom: 0.85rem; }
         .logo { font-size: 1.6rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
         .logo span { color: var(--accent); }
@@ -983,7 +973,6 @@ def serve_mobile_frontend():
         .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 7px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
         
-        /* PERFECTLY SPACED REVERSED ROW FOR FORGOT PASSWORD & STAFF PORTAL */
         .form-footer-actions { display: flex; justify-content: space-between; align-items: center; margin-top: -0.35rem; margin-bottom: 0.75rem; }
         .form-footer-actions a, .form-footer-actions span { font-size: 0.75rem; font-weight: 700; cursor: pointer; }
 
@@ -994,8 +983,11 @@ def serve_mobile_frontend():
         .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.75rem; }
         .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 10px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; text-align: center; margin-bottom: 0.75rem; line-height: 1.4; }
 
-        .app-footer { text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
-        .app-footer a { color: var(--primary); text-decoration: none; font-weight: 700; }
+        /* PROFESSIONAL FOOTER BAR: LANGUAGES ON LEFT, SUPPORT ON RIGHT */
+        .app-footer-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-top: 0.85rem; padding: 0 0.25rem; font-size: 0.75rem; color: var(--text-muted); }
+        .app-footer-bar a { color: var(--primary); text-decoration: none; font-weight: 700; }
+        .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
+        .lang-selector:hover { border-color: var(--accent); }
     </style>
 </head>
 <body>
@@ -1015,6 +1007,7 @@ def serve_mobile_frontend():
             <input type="password" id="owner-pass" placeholder="admin123" />
             
             <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.4rem;">Authorize & Open Dashboard</button>
+            <button class="close-modal" onclick="openWorkerLoginFromAdmin()" style="margin-top: 0.4rem; background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3);">Switch to Staff Portal Login</button>
             <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.4rem;">Return to Client App</button>
         </div>
     </div>
@@ -1033,18 +1026,9 @@ def serve_mobile_frontend():
             <input type="password" id="worker-pass-input" placeholder="Worker password" />
             
             <button class="btn-main" onclick="loginWorker()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.4rem;">Authorize Staff Portal</button>
+            <button class="close-modal" onclick="openAdminLoginFromWorker()" style="margin-top: 0.4rem; background: rgba(245, 158, 11, 0.15); color: var(--accent); border: 1px solid rgba(245, 158, 11, 0.3);">Return to Admin Login</button>
             <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.4rem;">Return to Client App</button>
         </div>
-    </div>
-
-    <!-- EXTERNAL TOP UTILITY BAR (SEPARATED CLEANLY OUTSIDE CARD) -->
-    <div class="app-header-bar">
-        <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
-            <option value="en">🇺🇸 English (EN)</option>
-            <option value="fr">🇫🇷 Français (FR)</option>
-            <option value="ar">🇲🇦 العربية (AR)</option>
-        </select>
-        <a href="/?mode=worker" class="staff-portal-pill" id="nav-staff-login">🔒 Staff Portal</a>
     </div>
 
     <div class="app-frame">
@@ -1075,7 +1059,6 @@ def serve_mobile_frontend():
                     <label id="lbl-password">Password</label>
                     <input type="password" id="signin-password" placeholder="Your password" />
                     
-                    <!-- REVERSED FOOTER ROW: FORGOT PASSWORD & STAFF PORTAL LINK WITH LOTS OF SPACE -->
                     <div class="form-footer-actions">
                         <a onclick="switchAuthMode('recover')" id="txt-forgot" style="color: var(--primary);">Forgot Password?</a>
                         <a href="/?mode=worker" style="color: var(--accent); text-decoration: none;" id="txt-staff-inline">🔒 Staff Portal</a>
@@ -1394,8 +1377,14 @@ def serve_mobile_frontend():
             </div>
         </div>
 
-        <div class="app-footer">
-            Support: <a href="mailto:contact@smartable.online">contact@smartable.online</a>
+        <!-- PROFESSIONAL FOOTER: LANGUAGES ON LEFT, SUPPORT ON RIGHT -->
+        <div class="app-footer-bar">
+            <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
+                <option value="en">🇺🇸 EN</option>
+                <option value="fr">🇫🇷 FR</option>
+                <option value="ar">🇲🇦 AR</option>
+            </select>
+            <div>Support: <a href="mailto:contact@smartable.online">contact@smartable.online</a></div>
         </div>
     </div>
 
@@ -1472,7 +1461,6 @@ def serve_mobile_frontend():
                 subtitle: "Enterprise POS & Loyalty",
                 tabRewards: "🏆 Rewards",
                 tabMenu: "📖 Menu & Order",
-                staffLogin: "Staff Portal",
                 signIn: "Sign In",
                 register: "Register",
                 customerSignIn: "Customer Sign In",
@@ -1520,7 +1508,6 @@ def serve_mobile_frontend():
                 subtitle: "POS & Fidélité Entreprise",
                 tabRewards: "🏆 Récompenses",
                 tabMenu: "📖 Menu & Commande",
-                staffLogin: "Portail Staff",
                 signIn: "Connexion",
                 register: "Inscription",
                 customerSignIn: "Connexion Client",
@@ -1568,7 +1555,6 @@ def serve_mobile_frontend():
                 subtitle: "نظام نقاط الولاء وإدارة المطاعم",
                 tabRewards: "🏆 المكافآت",
                 tabMenu: "📖 القائمة والطلب",
-                staffLogin: "بوابة الموظفين",
                 signIn: "تسجيل الدخول",
                 register: "إنشاء حساب",
                 customerSignIn: "تسجيل دخول العميل",
@@ -1626,7 +1612,6 @@ def serve_mobile_frontend():
             document.getElementById('app-subtitle').innerText = t.subtitle;
             document.getElementById('tab-btn-rewards').innerText = t.tabRewards;
             document.getElementById('tab-btn-menu').innerText = t.tabMenu;
-            document.getElementById('nav-staff-login').innerHTML = '🔒 ' + t.staffLogin;
             document.getElementById('txt-staff-inline').innerText = t.staffInline;
             document.getElementById('btn-toggle-signin').innerText = t.signIn;
             document.getElementById('btn-toggle-register').innerText = t.register;
@@ -1715,6 +1700,16 @@ def serve_mobile_frontend():
                 loadMenu();
             }
         };
+
+        function openWorkerLoginFromAdmin() {
+            document.getElementById('admin-login-modal').style.display = 'none';
+            document.getElementById('worker-login-modal').style.display = 'flex';
+        }
+
+        function openAdminLoginFromWorker() {
+            document.getElementById('worker-login-modal').style.display = 'none';
+            document.getElementById('admin-login-modal').style.display = 'flex';
+        }
 
         async function loginOwner() {
             const user = document.getElementById('owner-user').value.trim();
