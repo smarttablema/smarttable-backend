@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.1.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.2.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -794,7 +794,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL FLAGS, DEDICATED WORKER / ADMIN URLS & AUDIO ALERTS ---
+# --- FRONTEND UI WITH PROFESSIONAL FLAG LOGOS, COMPACT HEADER & DEDICATED WORKER / ADMIN URLS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -827,10 +827,10 @@ def serve_mobile_frontend():
         
         .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
-        .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
-        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-        .staff-portal-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 6px 12px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
-        .staff-portal-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); }
+        .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
+        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 5px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; outline: none; cursor: pointer; }
+        .staff-portal-btn { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 5px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
+        .staff-portal-btn:hover { background: rgba(56, 189, 248, 0.22); border-color: var(--primary); }
 
         .brand-header { text-align: center; margin-bottom: 1rem; }
         .logo { font-size: 1.65rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
@@ -1403,7 +1403,7 @@ def serve_mobile_frontend():
                 subtitle: "Enterprise POS & Loyalty",
                 tabRewards: "🏆 Rewards",
                 tabMenu: "📖 Menu & Order",
-                staffLogin: "🔒 Staff Portal",
+                staffLogin: "Staff Portal",
                 signIn: "Sign In",
                 register: "Register",
                 customerSignIn: "Customer Sign In",
@@ -1450,7 +1450,7 @@ def serve_mobile_frontend():
                 subtitle: "POS & Fidélité Entreprise",
                 tabRewards: "🏆 Récompenses",
                 tabMenu: "📖 Menu & Commande",
-                staffLogin: "🔒 Portail Staff",
+                staffLogin: "Portail Staff",
                 signIn: "Connexion",
                 register: "Inscription",
                 customerSignIn: "Connexion Client",
@@ -1497,7 +1497,7 @@ def serve_mobile_frontend():
                 subtitle: "نظام نقاط الولاء وإدارة المطاعم",
                 tabRewards: "🏆 المكافآت",
                 tabMenu: "📖 القائمة والطلب",
-                staffLogin: "🔒 بوابة الموظفين",
+                staffLogin: "بوابة الموظفين",
                 signIn: "تسجيل الدخول",
                 register: "إنشاء حساب",
                 customerSignIn: "تسجيل دخول العميل",
