@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.2.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.4.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -151,6 +151,13 @@ class WorkerLogin(BaseModel):
     worker_id: str
     password: str
 
+class WorkerCreate(BaseModel):
+    worker_id: str
+    password: str
+    recovery_pin: str
+    worker_name: str
+    restaurant_slug: str = "default-restaurant"
+
 class AdminPasswordChange(BaseModel):
     username: str = "admin"
     old_password: str
@@ -248,7 +255,7 @@ def login_customer(data: CustomerLogin):
             raise HTTPException(status_code=404, detail="Account not found. Please register first.")
         
         if customer.get("password") != pwd:
-            raise HTTPException(status_code=401, detail="Incorrect password. Use 'Forgot Password?' with your PIN.")
+            raise HTTPException(status_code=401, detail="Incorrect password.")
 
         return {"status": "success", "points_balance": customer["points_balance"]}
     except HTTPException as he:
@@ -262,9 +269,6 @@ def recover_customer_password(data: CustomerPinRecover):
     pin = data.recovery_pin.strip()
     new_pwd = data.new_password.strip()
     
-    if len(new_pwd) < 4:
-        raise HTTPException(status_code=400, detail="New password must be at least 4 characters.")
-
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -299,9 +303,6 @@ def change_customer_password(data: CustomerPasswordChange):
         if not customer or customer.get("password") != data.old_password.strip():
             raise HTTPException(status_code=401, detail="Current password is incorrect.")
         
-        if len(data.new_password.strip()) < 4:
-            raise HTTPException(status_code=400, detail="New password must be at least 4 characters.")
-
         cur.execute("UPDATE customers SET password = %s WHERE phone_number = %s;", (data.new_password.strip(), clean_phone))
         conn.commit()
         cur.close()
@@ -361,6 +362,54 @@ def worker_login(data: WorkerLogin):
         return {"status": "success", "role": "worker", "worker_name": worker["worker_name"], "message": "Worker login authorized."}
     except HTTPException as he:
         raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/workers/{slug}")
+def get_restaurant_workers(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, worker_id, worker_name, recovery_pin FROM restaurant_workers WHERE restaurant_slug = %s ORDER BY id DESC;", (slug,))
+        workers = cur.fetchall()
+        cur.close()
+        conn.close()
+        return workers or []
+    except Exception:
+        return []
+
+@app.post("/api/admin/workers/add")
+def add_restaurant_worker(data: WorkerCreate):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_workers WHERE worker_id = %s;", (data.worker_id.strip(),))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="Worker ID already exists.")
+        
+        cur.execute(
+            "INSERT INTO restaurant_workers (worker_id, password, recovery_pin, worker_name, restaurant_slug) VALUES (%s, %s, %s, %s, %s);",
+            (data.worker_id.strip(), data.password.strip(), data.recovery_pin.strip(), data.worker_name.strip(), data.restaurant_slug)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Worker account created successfully!"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/admin/workers/{worker_id_str}")
+def delete_restaurant_worker(worker_id_str: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM restaurant_workers WHERE worker_id = %s;", (worker_id_str,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Worker account deleted successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -794,7 +843,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL FLAG LOGOS, COMPACT HEADER & DEDICATED WORKER / ADMIN URLS ---
+# --- FRONTEND UI WITH FIXED HEADER, AUTHENTIC FLAG EMBLEMS & STAFF CREATOR IN SETTINGS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -825,127 +874,121 @@ def serve_mobile_frontend():
         body.lang-ar * { font-family: 'Cairo', sans-serif !important; direction: rtl; text-align: right; }
         body { background-color: var(--bg-deep); color: var(--text-main); display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 1rem; background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-deep) 70%); }
         
-        .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
+        .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.25rem 1.25rem 1.5rem 1.25rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
-        .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
-        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 5px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; outline: none; cursor: pointer; }
-        .staff-portal-btn { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 5px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
+        .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+        .staff-portal-btn { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: all 0.2s; white-space: nowrap; }
         .staff-portal-btn:hover { background: rgba(56, 189, 248, 0.22); border-color: var(--primary); }
 
-        .brand-header { text-align: center; margin-bottom: 1rem; }
-        .logo { font-size: 1.65rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
+        .brand-header { text-align: center; margin-bottom: 0.85rem; }
+        .logo { font-size: 1.6rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
         .logo span { color: var(--accent); }
-        .brand-tag { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-top: 2px; font-weight: 600; }
+        .brand-tag { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-top: 2px; font-weight: 600; }
         
-        .nav-tabs { display: flex; background: var(--bg-deep); border-radius: 14px; padding: 5px; margin-bottom: 1.25rem; border: 1px solid var(--border); }
-        .tab-btn { flex: 1; padding: 0.5rem; text-align: center; border-radius: 10px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
+        .nav-tabs { display: flex; background: var(--bg-deep); border-radius: 12px; padding: 4px; margin-bottom: 1rem; border: 1px solid var(--border); }
+        .tab-btn { flex: 1; padding: 0.45rem; text-align: center; border-radius: 9px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.3s; }
         .tab-btn.active { background: var(--surface-card); color: var(--text-main); box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 1px solid var(--border); }
         
-        .card { background: var(--surface-card); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid var(--border); position: relative; }
+        .card { background: var(--surface-card); border-radius: 16px; padding: 1.15rem; margin-bottom: 0.85rem; border: 1px solid var(--border); position: relative; }
         
-        label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        input, select, textarea { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.9rem; margin-bottom: 0.85rem; outline: none; transition: border-color 0.2s; resize: none; }
+        label { display: block; font-size: 0.73rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, select, textarea { width: 100%; padding: 0.75rem 0.9rem; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-deep); color: white; font-size: 0.88rem; margin-bottom: 0.75rem; outline: none; transition: border-color 0.2s; resize: none; }
         input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
         
-        .btn-main { width: 100%; padding: 0.8rem; border-radius: 12px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
+        .btn-main { width: 100%; padding: 0.75rem; border-radius: 10px; border: none; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #090d16; font-weight: 700; font-size: 0.9rem; cursor: pointer; transition: transform 0.1s; box-shadow: 0 4px 14px var(--accent-glow); }
         .btn-main:active { transform: scale(0.98); }
         
         .hidden { display: none !important; }
         
-        .wallet-card { background: linear-gradient(135deg, rgba(26, 38, 66, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 16px; padding: 1.25rem; text-align: center; margin-bottom: 1.25rem; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
-        .wallet-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-        .tier-badge { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 4px 10px; border-radius: 20px; font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-        .refresh-balance-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 4px 10px; border-radius: 20px; font-size: 0.68rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
-        .refresh-balance-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); transform: translateY(-1px); }
+        .wallet-card { background: linear-gradient(135deg, rgba(26, 38, 66, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 14px; padding: 1.1rem; text-align: center; margin-bottom: 1rem; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        .wallet-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+        .tier-badge { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: var(--accent); padding: 3px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+        .refresh-balance-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 3px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; transition: all 0.2s; }
+        .refresh-balance-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); }
         
-        .wallet-balance-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 0.25rem; }
-        .wallet-balance-number { font-size: 2.8rem; font-weight: 800; color: var(--success); letter-spacing: -1px; line-height: 1.1; margin: 0.2rem 0 0.5rem 0; text-shadow: 0 2px 10px rgba(16, 185, 129, 0.2); }
-        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 4px 12px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; }
+        .wallet-balance-label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-top: 0.2rem; }
+        .wallet-balance-number { font-size: 2.5rem; font-weight: 800; color: var(--success); letter-spacing: -1px; line-height: 1.1; margin: 0.15rem 0 0.4rem 0; text-shadow: 0 2px 10px rgba(16, 185, 129, 0.2); }
+        .cashback-badge { display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 700; }
 
-        .rewards-section-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.6rem; display: flex; align-items: center; gap: 6px; }
-        .rewards-list { display: flex; flex-direction: column; gap: 0.65rem; max-height: 180px; overflow-y: auto; margin-bottom: 1rem; padding-right: 3px; }
+        .rewards-section-title { font-size: 0.73rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 6px; }
+        .rewards-list { display: flex; flex-direction: column; gap: 0.6rem; max-height: 160px; overflow-y: auto; margin-bottom: 0.85rem; padding-right: 3px; }
         
-        .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.7rem 0.85rem; border-radius: 14px; border: 1px solid var(--border); gap: 0.75rem; transition: border-color 0.2s; }
+        .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.6rem 0.75rem; border-radius: 12px; border: 1px solid var(--border); gap: 0.65rem; transition: border-color 0.2s; }
         .reward-item:hover { border-color: rgba(245, 158, 11, 0.4); }
-        .reward-thumb { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: var(--surface); border: 1px solid var(--border); }
+        .reward-thumb { width: 42px; height: 42px; border-radius: 8px; object-fit: cover; background: var(--surface); border: 1px solid var(--border); }
         .reward-info { flex: 1; text-align: left; }
-        .reward-title { font-size: 0.88rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
-        .reward-cost { font-size: 0.72rem; color: var(--accent); font-weight: 700; display: inline-flex; align-items: center; gap: 3px; }
+        .reward-title { font-size: 0.85rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+        .reward-cost { font-size: 0.7rem; color: var(--accent); font-weight: 700; display: inline-flex; align-items: center; gap: 3px; }
         
-        .redeem-btn { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 7px 14px; border-radius: 10px; font-weight: 700; font-size: 0.75rem; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); transition: transform 0.1s; }
-        .redeem-btn:active { transform: scale(0.95); }
+        .redeem-btn { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 0.72rem; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); }
 
-        .review-link { display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; margin-top: 0.75rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 0.8rem; }
+        .review-link { display: flex; align-items: center; justify-content: center; gap: 6px; text-align: center; margin-top: 0.65rem; padding: 0.7rem; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 0.78rem; }
 
-        .pos-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 180px; overflow-y: auto; margin-bottom: 1rem; padding-right: 2px; }
+        .pos-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 160px; overflow-y: auto; margin-bottom: 0.85rem; padding-right: 2px; }
         .pos-item-card { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 8px; text-align: center; cursor: pointer; transition: all 0.2s; }
         .pos-item-card:hover { border-color: var(--accent); background: var(--surface); }
-        .pos-img { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; margin-bottom: 4px; }
-        .pos-title { font-size: 0.75rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .pos-price { font-size: 0.7rem; font-weight: 800; color: var(--accent); }
+        .pos-img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; margin-bottom: 4px; }
+        .pos-title { font-size: 0.73rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .pos-price { font-size: 0.68rem; font-weight: 800; color: var(--accent); }
 
-        .cart-box { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 0.85rem; max-height: 130px; overflow-y: auto; font-size: 0.8rem; }
-        .cart-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 4px; }
-        .cart-controls { display: flex; align-items: center; gap: 6px; }
-        .cart-btn-qty { background: var(--surface); border: 1px solid var(--border); color: white; width: 22px; height: 22px; border-radius: 6px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .cart-btn-qty:hover { border-color: var(--accent); }
+        .cart-box { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 8px; margin-bottom: 0.75rem; max-height: 110px; overflow-y: auto; font-size: 0.78rem; }
+        .cart-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 3px; }
+        .cart-controls { display: flex; align-items: center; gap: 5px; }
+        .cart-btn-qty { background: var(--surface); border: 1px solid var(--border); color: white; width: 20px; height: 20px; border-radius: 5px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-        .menu-grid { display: flex; flex-direction: column; gap: 0.75rem; max-height: 260px; overflow-y: auto; padding-right: 2px; margin-bottom: 1rem; }
-        .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 14px; padding: 0.75rem; border: 1px solid var(--border); gap: 0.85rem; cursor: pointer; transition: border-color 0.2s; }
-        .menu-card:hover { border-color: var(--accent); }
-        .menu-img { width: 50px; height: 50px; border-radius: 10px; object-fit: cover; background: var(--surface); }
+        .menu-grid { display: flex; flex-direction: column; gap: 0.65rem; max-height: 230px; overflow-y: auto; padding-right: 2px; margin-bottom: 0.85rem; }
+        .menu-card { display: flex; align-items: center; background: var(--bg-deep); border-radius: 12px; padding: 0.65rem; border: 1px solid var(--border); gap: 0.75rem; cursor: pointer; }
+        .menu-img { width: 45px; height: 45px; border-radius: 9px; object-fit: cover; background: var(--surface); }
         .menu-info { flex: 1; }
-        .menu-name { font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
-        .menu-cat { font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
-        .menu-price { font-size: 0.85rem; font-weight: 800; color: var(--accent); }
-        .add-cart-mini { background: var(--accent); color: #090d16; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 0.75rem; cursor: pointer; }
+        .menu-name { font-size: 0.85rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+        .menu-cat { font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; }
+        .menu-price { font-size: 0.8rem; font-weight: 800; color: var(--accent); }
+        .add-cart-mini { background: var(--accent); color: #090d16; border: none; padding: 5px 9px; border-radius: 7px; font-weight: 800; font-size: 0.72rem; cursor: pointer; }
 
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
-        .modal-content { background: var(--surface); padding: 1.75rem; border-radius: 24px; max-width: 400px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
-        @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        .modal-img { width: 100%; height: 160px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
-        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; margin-top: 0.5rem; }
-        .close-modal:hover { background: var(--danger); }
+        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 20px; max-width: 380px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); }
+        .modal-img { width: 100%; height: 150px; border-radius: 12px; object-fit: cover; margin-bottom: 0.85rem; border: 1px solid var(--border); }
+        .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.65rem; border-radius: 10px; cursor: pointer; font-weight: 700; width: 100%; margin-top: 0.4rem; }
 
-        .voucher-code-box { font-size: 2.2rem; font-weight: 800; color: var(--accent); background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; border: 1px dashed var(--accent); margin: 0.75rem 0; letter-spacing: 2px; }
+        .voucher-code-box { font-size: 2rem; font-weight: 800; color: var(--accent); background: var(--bg-deep); padding: 0.65rem; border-radius: 10px; border: 1px dashed var(--accent); margin: 0.65rem 0; letter-spacing: 2px; }
 
-        .admin-item-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg-deep); padding: 0.75rem; border-radius: 12px; margin-bottom: 0.5rem; font-size: 0.85rem; border: 1px solid var(--border); }
-        .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-weight: 700; }
+        .admin-item-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg-deep); padding: 0.65rem; border-radius: 10px; margin-bottom: 0.45rem; font-size: 0.8rem; border: 1px solid var(--border); }
+        .danger-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 9px; border-radius: 7px; cursor: pointer; font-weight: 700; font-size: 0.72rem; }
 
-        #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(120px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 24px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; box-shadow: 0 15px 30px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.2); }
+        #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(120px); background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 10px 20px; border-radius: 30px; font-weight: 700; font-size: 0.82rem; box-shadow: 0 15px 30px rgba(16, 185, 129, 0.4); z-index: 9999; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.2); }
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
-        #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); box-shadow: 0 15px 30px rgba(239, 68, 68, 0.4); }
+        #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
 
-        .admin-subnav { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 14px; margin-bottom: 1.25rem; border: 1px solid var(--border); overflow-x: auto; }
-        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 50px; padding: 2px 1px; text-align: center; border-radius: 8px; font-size: 0.5rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
-        .admin-sub-btn span.nav-icon { font-size: 0.95rem; margin-bottom: 2px; display: block; line-height: 1; }
+        .admin-subnav { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); overflow-x: auto; }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 48px; padding: 2px 1px; text-align: center; border-radius: 7px; font-size: 0.5rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 0.9rem; margin-bottom: 2px; display: block; line-height: 1; }
         .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         
-        .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
-        .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 14px; border-radius: 12px; border: 1px solid var(--border); transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-        .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
+        .queue-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 8px; }
+        .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+        .pin-display { background: var(--surface); padding: 6px; text-align: center; font-size: 1.2rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 6px 0; border: 1px dashed var(--border); }
         
-        .floor-card { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; transition: all 0.2s; }
+        .floor-card { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; }
         .floor-card.status-green { border-color: rgba(16, 185, 129, 0.4); background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, var(--bg-deep) 100%); }
         .floor-card.status-orange { border-color: rgba(249, 115, 22, 0.5); background: linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, var(--bg-deep) 100%); }
 
-        .auth-sub-toggle { display: flex; gap: 8px; margin-bottom: 1rem; }
-        .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .auth-sub-toggle { display: flex; gap: 6px; margin-bottom: 0.85rem; }
+        .auth-toggle-btn { flex: 1; background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-muted); padding: 7px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .auth-toggle-btn.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
         
-        .forgot-link { text-align: right; margin-top: -0.4rem; margin-bottom: 0.85rem; }
-        .forgot-link a { font-size: 0.72rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
-        .forgot-link a:hover { text-decoration: underline; }
+        .forgot-link { text-align: right; margin-top: -0.35rem; margin-bottom: 0.75rem; }
+        .forgot-link a { font-size: 0.7rem; color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
 
-        .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.85rem; }
-        .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
-        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 14px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .dashboard-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
+        .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+        .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         
-        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.85rem; }
-        .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700; text-align: center; margin-bottom: 0.85rem; line-height: 1.4; }
+        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.75rem; }
+        .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 10px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; text-align: center; margin-bottom: 0.75rem; line-height: 1.4; }
 
-        .app-footer { text-align: center; font-size: 0.72rem; color: var(--text-muted); margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.85rem; letter-spacing: 0.3px; }
+        .app-footer { text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 0.85rem; border-top: 1px solid var(--border); padding-top: 0.75rem; }
         .app-footer a { color: var(--primary); text-decoration: none; font-weight: 700; }
     </style>
 </head>
@@ -955,9 +998,9 @@ def serve_mobile_frontend():
     <!-- OWNER ADMIN LOGIN MODAL -->
     <div id="admin-login-modal" class="modal">
         <div class="modal-content">
-            <div class="logo" style="margin-bottom: 0.5rem;">smart<span>Table</span></div>
-            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Owner Control Center</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter manager username & password</p>
+            <div class="logo" style="margin-bottom: 0.4rem;">smart<span>Table</span></div>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--accent); margin-bottom: 0.2rem;">Owner Control Center</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 1rem;">Enter manager username & password</p>
             
             <label>Username</label>
             <input type="text" id="owner-user" placeholder="admin" value="admin" />
@@ -965,17 +1008,17 @@ def serve_mobile_frontend():
             <label>Password</label>
             <input type="password" id="owner-pass" placeholder="admin123" />
             
-            <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.5rem;">Authorize & Open Dashboard</button>
-            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.5rem;">Return to Client App</button>
+            <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.4rem;">Authorize & Open Dashboard</button>
+            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.4rem;">Return to Client App</button>
         </div>
     </div>
 
     <!-- STAFF WORKER LOGIN MODAL -->
     <div id="worker-login-modal" class="modal">
         <div class="modal-content">
-            <div class="logo" style="margin-bottom: 0.5rem;">smart<span>Table</span></div>
-            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--primary); margin-bottom: 0.25rem;">Staff Worker Portal</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Authorized staff access only</p>
+            <div class="logo" style="margin-bottom: 0.4rem;">smart<span>Table</span></div>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--primary); margin-bottom: 0.2rem;">Staff Worker Portal</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 1rem;">Authorized staff access only</p>
             
             <label>Worker ID</label>
             <input type="text" id="worker-id-input" placeholder="e.g. staff1" />
@@ -983,17 +1026,17 @@ def serve_mobile_frontend():
             <label>Password</label>
             <input type="password" id="worker-pass-input" placeholder="Worker password" />
             
-            <button class="btn-main" onclick="loginWorker()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;">Authorize Staff Portal</button>
-            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.5rem;">Return to Client App</button>
+            <button class="btn-main" onclick="loginWorker()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.4rem;">Authorize Staff Portal</button>
+            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.4rem;">Return to Client App</button>
         </div>
     </div>
 
     <div class="app-frame">
         <div class="top-utility-bar">
             <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
-                <option value="en">🇺🇸 English</option>
-                <option value="fr">🇫🇷 Français</option>
-                <option value="ar">🇲🇦 العربية</option>
+                <option value="en">🇺🇸 EN</option>
+                <option value="fr">🇫🇷 FR</option>
+                <option value="ar">🇲🇦 AR</option>
             </select>
             <a href="/?mode=worker" class="staff-portal-btn" id="nav-staff-login">🔒 Staff Portal</a>
         </div>
@@ -1019,7 +1062,7 @@ def serve_mobile_frontend():
 
                 <!-- SIGN IN FORM -->
                 <div id="form-signin">
-                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700;" id="txt-signin-title">Customer Sign In</h3>
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.9rem; font-weight: 700;" id="txt-signin-title">Customer Sign In</h3>
                     <label id="lbl-phone">Phone Number</label>
                     <input type="tel" id="signin-phone" placeholder="e.g., 0612345678" />
                     <label id="lbl-password">Password</label>
@@ -1032,28 +1075,28 @@ def serve_mobile_frontend():
 
                 <!-- REGISTER FORM -->
                 <div id="form-register" class="hidden">
-                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);" id="txt-reg-title">Create New Account</h3>
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-reg-title">Create New Account</h3>
                     <label id="lbl-reg-phone">Phone Number</label>
                     <input type="tel" id="reg-phone" placeholder="e.g., 0612345678" />
                     <label id="lbl-reg-pass">Password</label>
                     <input type="password" id="reg-password" placeholder="Create a password" />
                     <label id="lbl-reg-pin">Recovery PIN (4-Digits for Reset)</label>
                     <input type="password" id="reg-pin" placeholder="e.g., 1234" maxlength="4" />
-                    <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;" id="btn-reg-action">Register & Create Account</button>
+                    <button class="btn-main" onclick="registerCustomer()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.4rem;" id="btn-reg-action">Register & Create Account</button>
                 </div>
 
                 <!-- RECOVER FORM -->
                 <div id="form-recover" class="hidden">
-                    <h3 style="margin-bottom: 0.85rem; font-size: 0.95rem; font-weight: 700; color: var(--primary);" id="txt-rec-title">PIN Recovery & Reset</h3>
+                    <h3 style="margin-bottom: 0.75rem; font-size: 0.9rem; font-weight: 700; color: var(--primary);" id="txt-rec-title">PIN Recovery & Reset</h3>
                     <label id="lbl-rec-phone">Phone Number</label>
                     <input type="tel" id="recover-phone" placeholder="e.g., 0612345678" />
                     <label id="lbl-rec-pin">4-Digit Recovery PIN</label>
                     <input type="password" id="recover-pin" placeholder="e.g., 1234" maxlength="4" />
                     <label id="lbl-rec-new">New Password</label>
                     <input type="password" id="recover-new-pass" placeholder="Enter new password" />
-                    <button class="btn-main" onclick="recoverCustomer()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; margin-top: 0.5rem;" id="btn-rec-action">Reset Password & Login ✓</button>
-                    <div style="text-align: center; margin-top: 0.75rem;">
-                        <a onclick="switchAuthMode('signin')" style="font-size: 0.75rem; color: var(--text-muted); cursor: pointer;" id="txt-back-signin">Back to Sign In</a>
+                    <button class="btn-main" onclick="recoverCustomer()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; margin-top: 0.4rem;" id="btn-rec-action">Reset Password & Login ✓</button>
+                    <div style="text-align: center; margin-top: 0.65rem;">
+                        <a onclick="switchAuthMode('signin')" style="font-size: 0.72rem; color: var(--text-muted); cursor: pointer;" id="txt-back-signin">Back to Sign In</a>
                     </div>
                 </div>
             </div>
@@ -1072,14 +1115,14 @@ def serve_mobile_frontend():
                 <div>
                     <div class="rewards-section-title" id="lbl-rewards-title">🎁 Redeemable Rewards</div>
                     <div id="customer-rewards-list" class="rewards-list">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">Loading rewards...</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem; padding: 1rem 0;">Loading rewards...</div>
                     </div>
                 </div>
 
-                <div style="border-top: 1px solid var(--border); margin-top: 0.5rem; padding-top: 0.75rem;">
+                <div style="border-top: 1px solid var(--border); margin-top: 0.4rem; padding-top: 0.65rem;">
                     <label id="referral-label-text">👥 Refer a Friend (+50 pts on 1st visit)</label>
                     <input type="tel" id="friend-phone" placeholder="Friend's Phone Number" />
-                    <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; padding: 0.6rem; font-size: 0.85rem;" id="btn-refer">Register Friend</button>
+                    <button class="btn-main" onclick="referFriend()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; padding: 0.55rem; font-size: 0.8rem;" id="btn-refer">Register Friend</button>
                 </div>
 
                 <a href="https://maps.google.com" target="_blank" class="review-link" id="review-link-btn" onclick="claimReview()">
@@ -1096,14 +1139,14 @@ def serve_mobile_frontend():
         <!-- CLIENT: MENU & NFC AUTOMATED ORDERING TAB -->
         <div id="tab-menu" class="client-view hidden">
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                    <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent);" id="txt-menu-title">📖 Interactive Menu & Order</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent);" id="txt-menu-title">📖 Interactive Menu & Order</h3>
                 </div>
 
                 <div id="table-selection-container"></div>
 
                 <div id="menu-container" class="menu-grid">
-                    <div style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding: 2rem 0;">Loading menu...</div>
+                    <div style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding: 2rem 0;">Loading menu...</div>
                 </div>
 
                 <label id="lbl-cart-title">🛒 Your App Order Cart:</label>
@@ -1111,12 +1154,12 @@ def serve_mobile_frontend():
                     <div style="text-align: center; color: var(--text-muted);" id="txt-empty-cart">Cart is empty. Tap items above to add!</div>
                 </div>
 
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-weight: 800; font-size: 0.95rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem; font-weight: 800; font-size: 0.9rem;">
                     <span id="lbl-total">Total Bill:</span>
                     <span id="app-total-val" style="color: var(--accent);">0.00 MAD</span>
                 </div>
 
-                <button class="btn-main" id="place-order-btn" onclick="submitAppOrder()" style="background: var(--success); color: white; padding: 0.75rem; font-size: 0.9rem;">Place App Order & Earn Cashback ✓</button>
+                <button class="btn-main" id="place-order-btn" onclick="submitAppOrder()" style="background: var(--success); color: white; padding: 0.7rem; font-size: 0.85rem;">Place App Order & Earn Cashback ✓</button>
             </div>
         </div>
 
@@ -1152,10 +1195,10 @@ def serve_mobile_frontend():
             <!-- 1. QUEUE -->
             <div id="admin-sub-queue" class="admin-section">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);" id="txt-live-queue">⚡ Live Orders & Redemptions Queue</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;" id="txt-queue-desc">Real-time kitchen orders & customer redemptions</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-live-queue">⚡ Live Orders & Redemptions Queue</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-queue-desc">Real-time kitchen orders & customer redemptions</p>
                     <div id="admin-queue-container" class="queue-grid">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">No active orders right now.</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No active orders right now.</div>
                     </div>
                 </div>
             </div>
@@ -1163,7 +1206,7 @@ def serve_mobile_frontend():
             <!-- 2. MENU -->
             <div id="admin-sub-menu" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
                     <label>Category</label>
                     <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
                     <label>Item Name</label>
@@ -1172,56 +1215,56 @@ def serve_mobile_frontend():
                     <input type="text" id="admin-price" placeholder="e.g. 65" />
                     <label>Image URL (Optional)</label>
                     <input type="text" id="admin-img" placeholder="https://..." />
-                    <button class="btn-main" onclick="addAdminMenu()" style="margin-bottom: 1rem; padding: 0.6rem; font-size: 0.8rem;">+ Add Menu Item</button>
+                    <button class="btn-main" onclick="addAdminMenu()" style="margin-bottom: 0.85rem; padding: 0.55rem; font-size: 0.78rem;">+ Add Menu Item</button>
                     
                     <label>Existing Items:</label>
-                    <div id="admin-menu-list" style="max-height: 150px; overflow-y: auto;"></div>
+                    <div id="admin-menu-list" style="max-height: 140px; overflow-y: auto;"></div>
                 </div>
             </div>
 
             <!-- 3. REPORTS -->
             <div id="admin-sub-reports" class="admin-section hidden admin-restricted">
                 <div class="card" style="text-align: center;">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
-                    <div id="shift-label-display" style="font-size: 0.7rem; color: var(--success); margin-bottom: 0.85rem; font-weight: 700;">Active Shift: 07:00 - 00:00</div>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
+                    <div id="shift-label-display" style="font-size: 0.68rem; color: var(--success); margin-bottom: 0.75rem; font-weight: 700;">Active Shift: 07:00 - 00:00</div>
                     
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem;">
-                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border);">
-                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Total Revenue</div>
-                            <div id="rep-revenue" style="font-size: 1.2rem; font-weight: 800; color: var(--success);">0 MAD</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
+                        <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border);">
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Total Revenue</div>
+                            <div id="rep-revenue" style="font-size: 1.1rem; font-weight: 800; color: var(--success);">0 MAD</div>
                         </div>
-                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border);">
-                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Orders Sold</div>
-                            <div id="rep-orders" style="font-size: 1.2rem; font-weight: 800; color: var(--primary);">0</div>
+                        <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border);">
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Orders Sold</div>
+                            <div id="rep-orders" style="font-size: 1.1rem; font-weight: 800; color: var(--primary);">0</div>
                         </div>
                     </div>
 
-                    <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.6rem; font-size: 0.8rem; border-radius: 10px;">🗑️ Clear / Reset Shift Data</button>
+                    <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.55rem; font-size: 0.78rem; border-radius: 9px;">🗑️ Clear / Reset Shift Data</button>
                 </div>
             </div>
 
             <!-- 4. REWARDS -->
             <div id="admin-sub-rewards" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
                     <label>Reward Title</label>
                     <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
                     <label>Points Required</label>
                     <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
                     <label>Image URL (Optional)</label>
                     <input type="text" id="reward-img-input" placeholder="https://..." />
-                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.6rem; font-size: 0.8rem; margin-bottom: 1rem;">+ Create Reward</button>
+                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.55rem; font-size: 0.78rem; margin-bottom: 0.85rem;">+ Create Reward</button>
                     
                     <label>Configured Rewards:</label>
-                    <div id="admin-rewards-list" style="max-height: 150px; overflow-y: auto;"></div>
+                    <div id="admin-rewards-list" style="max-height: 140px; overflow-y: auto;"></div>
                 </div>
             </div>
 
             <!-- 5. POS -->
             <div id="admin-sub-pos" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);" id="txt-pos-title">🛒 Touchscreen POS Builder</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;" id="txt-pos-desc">Select table & tap items to build and adjust order cart</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-pos-title">🛒 Touchscreen POS Builder</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-pos-desc">Select table & tap items to build and adjust order cart</p>
                     
                     <label id="lbl-pos-table">Select Table Number / Walk-in</label>
                     <select id="pos-table-select">
@@ -1236,7 +1279,7 @@ def serve_mobile_frontend():
                     </select>
 
                     <div id="pos-menu-grid" class="pos-grid">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.7rem; grid-column: span 2;">Loading items...</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.68rem; grid-column: span 2;">Loading items...</div>
                     </div>
 
                     <label id="lbl-pos-cart">Order Cart (Use + / - to adjust quantities):</label>
@@ -1244,22 +1287,22 @@ def serve_mobile_frontend():
                         <div style="text-align: center; color: var(--text-muted);">Cart is empty</div>
                     </div>
 
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; font-weight: 800; font-size: 0.95rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-weight: 800; font-size: 0.9rem;">
                         <span id="lbl-pos-total">Total:</span>
                         <span id="pos-total-val" style="color: var(--accent);">0.00 MAD</span>
                     </div>
 
-                    <button class="btn-main" onclick="confirmPOSOrder()" style="background: var(--success); color: white; padding: 0.7rem; font-size: 0.85rem;" id="btn-confirm-pos">Confirm & Submit Order ✓</button>
+                    <button class="btn-main" onclick="confirmPOSOrder()" style="background: var(--success); color: white; padding: 0.65rem; font-size: 0.8rem;" id="btn-confirm-pos">Confirm & Submit Order ✓</button>
                 </div>
             </div>
 
             <!-- FLOOR PLAN VIEW -->
             <div id="admin-sub-floor" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Live status across restaurant tables</p>
-                    <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem; grid-column: span 2;">Loading floor map...</div>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;">Live status across restaurant tables</p>
+                    <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem; grid-column: span 2;">Loading floor map...</div>
                     </div>
                 </div>
             </div>
@@ -1267,31 +1310,31 @@ def serve_mobile_frontend():
             <!-- SMART ANALYTICS & CRM -->
             <div id="admin-sub-analytics" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.4rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
-                    <p style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.75rem;">Monthly performance and customer retention</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;">Monthly performance and customer retention</p>
                     
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem;">
-                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); text-align: center;">
-                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">This Month Revenue</div>
-                            <div id="analytics-monthly-rev" style="font-size: 1.1rem; font-weight: 800; color: var(--success);">0 MAD</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
+                        <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border); text-align: center;">
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">This Month Revenue</div>
+                            <div id="analytics-monthly-rev" style="font-size: 1.05rem; font-weight: 800; color: var(--success);">0 MAD</div>
                         </div>
-                        <div style="background: var(--bg-deep); padding: 10px; border-radius: 12px; border: 1px solid var(--border); text-align: center;">
-                            <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Monthly Growth</div>
-                            <div id="analytics-growth-pct" style="font-size: 1.1rem; font-weight: 800; color: var(--primary);">+0%</div>
+                        <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border); text-align: center;">
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Monthly Growth</div>
+                            <div id="analytics-growth-pct" style="font-size: 1.05rem; font-weight: 800; color: var(--primary);">+0%</div>
                         </div>
                     </div>
 
                     <label>⭐ Top VIP Spenders Leaderboard:</label>
-                    <div id="analytics-vip-list" style="max-height: 130px; overflow-y: auto;">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.75rem;">Loading VIPs...</div>
+                    <div id="analytics-vip-list" style="max-height: 120px; overflow-y: auto;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">Loading VIPs...</div>
                     </div>
                 </div>
             </div>
 
-            <!-- 7. SETTINGS -->
+            <!-- 7. SETTINGS & STAFF MANAGEMENT -->
             <div id="admin-sub-settings" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.75rem; font-size: 0.95rem; font-weight: 700; color: var(--accent);">⚙️ Campaign & Shift Settings</h3>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">⚙️ Campaign, Shift & Staff Settings</h3>
                     
                     <label>Google Review Points</label>
                     <input type="number" id="setting-review-pts" placeholder="e.g. 50" />
@@ -1302,24 +1345,39 @@ def serve_mobile_frontend():
                     <label>Cashback Percentage (%)</label>
                     <input type="number" step="0.5" id="setting-cb-pct" placeholder="e.g. 10" />
 
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.75rem;">
                         <div>
-                            <label>Shift Open Time</label>
+                            <label>Shift Open</label>
                             <input type="time" id="setting-open-time" value="07:00" />
                         </div>
                         <div>
-                            <label>Shift Close Time</label>
+                            <label>Shift Close</label>
                             <input type="time" id="setting-close-time" value="00:00" />
                         </div>
                     </div>
 
-                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.7rem; font-size: 0.85rem; margin-bottom: 1rem;">Save Campaign Settings ✓</button>
+                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.65rem; font-size: 0.8rem; margin-bottom: 1rem;">Save Campaign Settings ✓</button>
+
+                    <!-- WORKER MANAGEMENT INSIDE SETTINGS -->
+                    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-bottom: 0.75rem;">
+                        <label style="color: var(--primary);">👥 Manage Staff Workers (Add / Delete)</label>
+                        <input type="text" id="new-worker-id" placeholder="Worker ID / Username (e.g. staff2)" />
+                        <input type="text" id="new-worker-name" placeholder="Worker Full Name (e.g. Youssef Benali)" />
+                        <input type="password" id="new-worker-pass" placeholder="Worker Login Password" />
+                        <input type="password" id="new-worker-pin" placeholder="Worker Recovery PIN (4-Digits)" maxlength="4" />
+                        <button class="btn-main" onclick="createNewWorker()" style="background: var(--primary); color: #090d16; padding: 0.6rem; font-size: 0.78rem; margin-bottom: 0.75rem;">+ Create New Worker Account</button>
+                        
+                        <label>Active Staff Accounts:</label>
+                        <div id="admin-workers-list" style="max-height: 120px; overflow-y: auto;">
+                            <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">Loading staff...</div>
+                        </div>
+                    </div>
 
                     <div style="border-top: 1px solid var(--border); padding-top: 0.75rem;">
-                        <label style="color: var(--primary);">🔒 Change Owner Password</label>
+                        <label style="color: var(--accent);">🔒 Change Owner Password</label>
                         <input type="password" id="admin-old-pass" placeholder="Current Admin Password" />
                         <input type="password" id="admin-new-pass" placeholder="New Admin Password" />
-                        <button class="btn-main" onclick="changeAdminPassword()" style="background: var(--primary); color: #090d16; padding: 0.6rem; font-size: 0.8rem;">Update Admin Password</button>
+                        <button class="btn-main" onclick="changeAdminPassword()" style="background: var(--accent); color: #090d16; padding: 0.55rem; font-size: 0.75rem;">Update Admin Password</button>
                     </div>
                 </div>
             </div>
@@ -1333,46 +1391,46 @@ def serve_mobile_frontend():
     <!-- MODALS -->
     <div id="client-password-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Change Password</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Update your account password securely:</p>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;">Change Password</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">Update your account password securely:</p>
             <label style="text-align: left;">Current Password</label>
             <input type="password" id="client-old-pass" placeholder="Current password" />
             <label style="text-align: left;">New Password</label>
             <input type="password" id="client-new-pass" placeholder="New password" />
             <label style="text-align: left;">Repeat New Password</label>
             <input type="password" id="client-repeat-pass" placeholder="Confirm new password" />
-            <button class="btn-main" onclick="submitClientPasswordChange()" style="margin-bottom: 0.5rem; margin-top: 0.5rem;">Save New Password ✓</button>
+            <button class="btn-main" onclick="submitClientPasswordChange()" style="margin-bottom: 0.4rem; margin-top: 0.4rem;">Save New Password ✓</button>
             <button class="close-modal" onclick="document.getElementById('client-password-modal').style.display='none'">Cancel</button>
         </div>
     </div>
 
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--danger); margin-bottom: 0.4rem;">Reset Shift Data?</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:</p>
-            <input type="password" id="reset-admin-pwd" placeholder="Enter admin password" style="margin-bottom: 1rem;" />
-            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.5rem;">Confirm & Wipe Shift</button>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--danger); margin-bottom: 0.35rem;">Reset Shift Data?</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:</p>
+            <input type="password" id="reset-admin-pwd" placeholder="Enter admin password" style="margin-bottom: 0.85rem;" />
+            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.4rem;">Confirm & Wipe Shift</button>
             <button class="close-modal" onclick="document.getElementById('clear-reports-modal').style.display='none'">Cancel</button>
         </div>
     </div>
 
     <div id="redeem-name-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.4rem;">Claim Reward</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem;">Please enter your name for the waiter:</p>
-            <input type="text" id="customer-name-input" placeholder="e.g., Mohammed Daou" style="margin-bottom: 1rem;" />
-            <button class="btn-main" onclick="confirmRedeem()" style="margin-bottom: 0.5rem;">Confirm & Get PIN</button>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;">Claim Reward</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">Please enter your name for the waiter:</p>
+            <input type="text" id="customer-name-input" placeholder="e.g., Mohammed Daou" style="margin-bottom: 0.85rem;" />
+            <button class="btn-main" onclick="confirmRedeem()" style="margin-bottom: 0.4rem;">Confirm & Get PIN</button>
             <button class="close-modal" onclick="document.getElementById('redeem-name-modal').style.display='none'">Cancel</button>
         </div>
     </div>
 
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1rem; font-weight: 700; color: var(--success); margin-bottom: 0.25rem;">Reward Unlocked!</h3>
-            <p style="font-size: 0.75rem; color: var(--text-muted);">Show PIN to waiter:</p>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--success); margin-bottom: 0.2rem;">Reward Unlocked!</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted);">Show PIN to waiter:</p>
             <div id="modal-voucher-code" class="voucher-code-box">----</div>
-            <img id="modal-voucher-img" class="modal-img" src="" style="height: 120px; margin-bottom: 0.5rem;" />
-            <div id="modal-voucher-title" style="font-size: 0.85rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.75rem;"></div>
+            <img id="modal-voucher-img" class="modal-img" src="" style="height: 110px; margin-bottom: 0.4rem;" />
+            <div id="modal-voucher-title" style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.65rem;"></div>
             <button class="close-modal" onclick="closeVoucherModal()">Done</button>
         </div>
     </div>
@@ -1380,8 +1438,8 @@ def serve_mobile_frontend():
     <div id="image-modal" class="modal">
         <div class="modal-content">
             <img id="modal-img-tag" class="modal-img" src="" />
-            <h3 id="modal-title" style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem; color: var(--text-main);"></h3>
-            <div id="modal-price" style="font-size: 1rem; font-weight: 800; color: var(--accent); margin-bottom: 0.5rem;"></div>
+            <h3 id="modal-title" style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.2rem; color: var(--text-main);"></h3>
+            <div id="modal-price" style="font-size: 0.95rem; font-weight: 800; color: var(--accent); margin-bottom: 0.4rem;"></div>
             <button class="close-modal" onclick="closeModal()">Close Preview</button>
         </div>
     </div>
@@ -1624,13 +1682,13 @@ def serve_mobile_frontend():
                 tableContainer.innerHTML = `
                     <div class="table-badge-locked">
                         <span>📍 NFC Scanned Table:</span>
-                        <span style="font-size: 0.95rem; font-weight: 800; color: white; background: var(--primary); padding: 2px 10px; border-radius: 6px;">Table ${lockedTableNumber}</span>
+                        <span style="font-size: 0.9rem; font-weight: 800; color: white; background: var(--primary); padding: 2px 8px; border-radius: 6px;">Table ${lockedTableNumber}</span>
                     </div>
                 `;
             } else {
                 tableContainer.innerHTML = `
                     <div class="table-badge-unlocked">
-                        ⚠️ No Table NFC Tag Detected!<br>Please scan the NFC sticker or QR code on your table to place an order.
+                        ⚠️ No Table NFC Tag Detected!<br>Please scan the NFC sticker or QR code on your table.
                     </div>
                 `;
                 document.getElementById('place-order-btn').disabled = true;
@@ -1712,6 +1770,7 @@ def serve_mobile_frontend():
                 loadAdminMenu();
                 loadAdminRewards();
                 loadAnalytics();
+                loadAdminWorkers();
             }
 
             loadAdminQueue();
@@ -1759,6 +1818,65 @@ def serve_mobile_frontend():
                 }
             } catch(e) {
                 showToast('Connection error', true);
+            }
+        }
+
+        async function createNewWorker() {
+            const worker_id = document.getElementById('new-worker-id').value.trim();
+            const worker_name = document.getElementById('new-worker-name').value.trim();
+            const password = document.getElementById('new-worker-pass').value.trim();
+            const recovery_pin = document.getElementById('new-worker-pin').value.trim();
+            if(!worker_id || !worker_name || !password || !recovery_pin) { showToast('Fill all worker fields including PIN', true); return; }
+            try {
+                const res = await fetch('/api/admin/workers/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ worker_id, worker_name, password, recovery_pin, restaurant_slug: currentSlug })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast(data.message);
+                    document.getElementById('new-worker-id').value = '';
+                    document.getElementById('new-worker-name').value = '';
+                    document.getElementById('new-worker-pass').value = '';
+                    document.getElementById('new-worker-pin').value = '';
+                    loadAdminWorkers();
+                } else {
+                    showToast(data.detail || 'Failed to create worker', true);
+                }
+            } catch(e) {
+                showToast('Connection error', true);
+            }
+        }
+
+        async function loadAdminWorkers() {
+            try {
+                const res = await fetch('/api/admin/workers/' + currentSlug);
+                const workers = await res.json();
+                const container = document.getElementById('admin-workers-list');
+                if(!workers || workers.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.72rem;">No staff accounts.</div>';
+                    return;
+                }
+                container.innerHTML = workers.map(w => `
+                    <div class="admin-item-row">
+                        <span><b>${w.worker_name}</b> (ID: ${w.worker_id}, PIN: ${w.recovery_pin || 'N/A'})</span>
+                        <button class="danger-btn" onclick="deleteWorker('${w.worker_id}')">Remove</button>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        async function deleteWorker(workerId) {
+            if(!confirm(`Remove staff account ${workerId}?`)) return;
+            try {
+                const res = await fetch('/api/admin/workers/' + encodeURIComponent(workerId), { method: 'DELETE' });
+                if(res.ok) {
+                    showToast('Worker account removed.');
+                    loadAdminWorkers();
+                }
+            } catch(e) {
+                showToast('Error removing worker', true);
             }
         }
 
@@ -1982,6 +2100,7 @@ def serve_mobile_frontend():
             if(subName === 'analytics') loadAnalytics();
             if(subName === 'pos') loadPOSMenu();
             if(subName === 'reports') loadDailyReport();
+            if(subName === 'settings') loadAdminWorkers();
         }
 
         async function loadMenu() {
@@ -2088,7 +2207,7 @@ def serve_mobile_frontend():
                 menuItemsCache = await res.json();
                 const container = document.getElementById('pos-menu-grid');
                 if(!menuItemsCache || menuItemsCache.length === 0) {
-                    container.innerHTML = '<div style="grid-column: span 2; text-align:center; color:var(--text-muted); font-size:0.75rem;">No items found.</div>';
+                    container.innerHTML = '<div style="grid-column: span 2; text-align:center; color:var(--text-muted); font-size:0.72rem;">No items found.</div>';
                     return;
                 }
                 container.innerHTML = menuItemsCache.map(item => `
@@ -2226,7 +2345,7 @@ def serve_mobile_frontend():
 
                 const vipContainer = document.getElementById('analytics-vip-list');
                 if(!data.vip_spenders || data.vip_spenders.length === 0) {
-                    vipContainer.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No VIP customers yet.</div>';
+                    vipContainer.innerHTML = '<div style="color:var(--text-muted); font-size:0.72rem;">No VIP customers yet.</div>';
                     return;
                 }
                 vipContainer.innerHTML = data.vip_spenders.map((v, i) => `
@@ -2257,9 +2376,9 @@ def serve_mobile_frontend():
                 }
                 return `
                     <div class="floor-card ${statusClass}">
-                        <div style="font-size: 1rem; font-weight: 800; color: var(--text-main); margin-bottom: 4px;">Table ${t}</div>
-                        <div style="font-size: 0.72rem; font-weight: 700;">${statusText}</div>
-                        ${activeOrder ? `<div style="font-size: 0.65rem; color: var(--accent); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${activeOrder.reward_item}</div>` : ''}
+                        <div style="font-size: 0.95rem; font-weight: 800; color: var(--text-main); margin-bottom: 3px;">Table ${t}</div>
+                        <div style="font-size: 0.68rem; font-weight: 700;">${statusText}</div>
+                        ${activeOrder ? `<div style="font-size: 0.62rem; color: var(--accent); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${activeOrder.reward_item}</div>` : ''}
                     </div>
                 `;
             }).join('');
@@ -2295,7 +2414,7 @@ def serve_mobile_frontend():
 
                 const container = document.getElementById('admin-queue-container');
                 if(!activeQueueCache || activeQueueCache.length === 0) {
-                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.75rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
+                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.72rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
                     return;
                 }
                 
@@ -2307,14 +2426,14 @@ def serve_mobile_frontend():
 
                     return `
                         <div class="redemption-card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                                <span style="background: var(--primary); color: #090d16; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem;">Table ${item.table_number}</span>
-                                <span style="font-size: 0.75rem; font-weight: 800; color: var(--text-muted);">${diffMinutes}m ago</span>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                <span style="background: var(--primary); color: #090d16; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 0.7rem;">Table ${item.table_number}</span>
+                                <span style="font-size: 0.72rem; font-weight: 800; color: var(--text-muted);">${diffMinutes}m ago</span>
                             </div>
-                            <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
-                            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
+                            <div style="font-weight: 700; font-size: 0.9rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
+                            <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-main);">${item.reward_item}</div>
                             ${item.security_pin !== 'POS' && item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : ''}
-                            <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
+                            <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 7px; font-size: 0.78rem; margin-top: 5px;">Mark Fulfilled ✓</button>
                         </div>
                     `;
                 }).join('');
@@ -2333,7 +2452,7 @@ def serve_mobile_frontend():
                 const rewards = await res.json();
                 const container = document.getElementById('customer-rewards-list');
                 if(!rewards || rewards.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center;">No rewards available.</div>';
+                    container.innerHTML = '<div style="color:var(--text-muted); font-size:0.72rem; text-align:center;">No rewards available.</div>';
                     return;
                 }
                 container.innerHTML = rewards.map(r => `
@@ -2433,7 +2552,7 @@ def serve_mobile_frontend():
             const res = await fetch('/api/menu/' + currentSlug);
             const items = await res.json();
             const container = document.getElementById('admin-menu-list');
-            if(!items || items.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No items.</div>'; return; }
+            if(!items || items.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.72rem;">No items.</div>'; return; }
             container.innerHTML = items.map(item => `
                 <div class="admin-item-row">
                     <span><b>${item.name}</b> (${item.price})</span>
@@ -2469,7 +2588,7 @@ def serve_mobile_frontend():
             const res = await fetch('/api/rewards/' + currentSlug);
             const rewards = await res.json();
             const container = document.getElementById('admin-rewards-list');
-            if(!rewards || rewards.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem;">No rewards.</div>'; return; }
+            if(!rewards || rewards.length === 0) { container.innerHTML = '<div style="color:var(--text-muted); font-size:0.72rem;">No rewards.</div>'; return; }
             container.innerHTML = rewards.map(r => `
                 <div class="admin-item-row">
                     <span><b>${r.title}</b> (${r.points_required} pts)</span>
