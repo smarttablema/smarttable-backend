@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="SmartTable.ma Enterprise POS & Loyalty Engine", version="11.9.1")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="11.9.2")
 
 @app.on_event("startup")
 def startup_db():
@@ -184,7 +184,7 @@ class SettingsUpdate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "online", "database": "neon-postgres", "brand": "smarttable.ma"}
+    return {"status": "online", "database": "neon-postgres", "brand": "smartTable"}
 
 @app.post("/api/customer/register")
 def register_customer(data: CustomerRegister):
@@ -575,7 +575,6 @@ def get_analytics_insights(slug: str):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Monthly revenue calculation (Current Month vs Previous Month)
         cur.execute("""
             SELECT 
                 COALESCE(SUM(CASE WHEN date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE) THEN total_amount ELSE 0 END), 0) as current_month_rev,
@@ -860,7 +859,7 @@ def serve_mobile_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartTable.ma | Enterprise POS & Loyalty</title>
+    <title>smartTable | Enterprise POS & Loyalty</title>
     <link rel="icon" type="image/png" href="https://img.icons8.com/color/48/qr-code.png">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -1006,7 +1005,7 @@ def serve_mobile_frontend():
     <!-- OWNER ADMIN LOGIN GATE -->
     <div id="admin-login-modal" class="modal" style="display: none;">
         <div class="modal-content">
-            <div class="logo" style="margin-bottom: 0.5rem;">SmartTable<span>.ma</span></div>
+            <div class="logo" style="margin-bottom: 0.5rem;">smart<span>Table</span></div>
             <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Owner Control Center</h3>
             <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter manager username (admin) & password</p>
             
@@ -1022,7 +1021,7 @@ def serve_mobile_frontend():
 
     <div class="app-frame">
         <div class="brand-header">
-            <div class="logo">SmartTable<span>.ma</span></div>
+            <div class="logo">smart<span>Table</span></div>
             <div class="brand-tag" id="app-subtitle">Enterprise POS & Loyalty</div>
         </div>
         
