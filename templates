@@ -38,6 +38,25 @@
         .rewards-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 160px; overflow-y: auto; margin-top: 0.5rem; }
         .reward-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg-deep); padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid var(--border); }
         .redeem-btn { background: var(--success); color: white; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 700; font-size: 0.72rem; cursor: pointer; }
+        
+        /* App Footer / Contact Styling */
+        .app-footer {
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+            border-top: 1px solid var(--border);
+            padding-top: 0.75rem;
+        }
+        .app-footer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .app-footer a:hover {
+            text-decoration: underline;
+        }
+
         #toast-banner { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%) translateY(120px); background: #10b981; color: white; padding: 10px 20px; border-radius: 30px; font-weight: 700; font-size: 0.85rem; z-index: 9999; transition: transform 0.3s ease; }
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
     </style>
@@ -76,7 +95,13 @@
                 <div id="menu-container" style="color: var(--text-muted); text-align: center; padding: 1rem;">Loading menu...</div>
             </div>
         </div>
+
+        <!-- Professional Contact Footer Added Here -->
+        <div class="app-footer">
+            Support: <a href="mailto:contact@smarttable.online">contact@smarttable.online</a>
+        </div>
     </div>
+
     <script>
         let currentPhone = '';
         const currentSlug = 'default-restaurant';
