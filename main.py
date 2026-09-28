@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="11.9.2")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="11.9.3")
 
 @app.on_event("startup")
 def startup_db():
@@ -1387,7 +1387,7 @@ def serve_mobile_frontend():
 
         <!-- Professional Contact Footer inside Card Frame -->
         <div class="app-footer">
-            Support: <a href="mailto:contact@smarttable.online">contact@smarttable.online</a>
+            Support: <a href="mailto:contact@smartable.online">contact@smartable.online</a>
         </div>
     </div>
 
