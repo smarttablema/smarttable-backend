@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.0.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.1.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -155,11 +155,6 @@ class AdminPasswordChange(BaseModel):
     username: str = "admin"
     old_password: str
     new_password: str
-
-class CashbackProcess(BaseModel):
-    phone_number: str
-    bill_amount: float
-    restaurant_slug: str = "default-restaurant"
 
 class POSOrderCreate(BaseModel):
     restaurant_slug: str = "default-restaurant"
@@ -799,7 +794,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH MULTI-LANGUAGE (EN, FR, AR), POS TABLE SELECTOR, +/- CART & AUDIO ALERTS ---
+# --- FRONTEND UI WITH PROFESSIONAL FLAGS, DEDICATED WORKER / ADMIN URLS & AUDIO ALERTS ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -833,8 +828,9 @@ def serve_mobile_frontend():
         .app-frame { width: 100%; max-width: 480px; background: var(--surface); border-radius: var(--radius); padding: 1.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); border: 1px solid var(--border); position: relative; overflow: hidden; }
         
         .top-utility-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
-        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 4px 8px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; outline: none; cursor: pointer; }
-        .staff-portal-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 4px 10px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-decoration: none; }
+        .lang-selector { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: 10px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+        .staff-portal-btn { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 6px 12px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; }
+        .staff-portal-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: var(--primary); }
 
         .brand-header { text-align: center; margin-bottom: 1rem; }
         .logo { font-size: 1.65rem; font-weight: 800; color: var(--text-main); letter-spacing: -0.5px; }
@@ -905,7 +901,7 @@ def serve_mobile_frontend():
         .add-cart-mini { background: var(--accent); color: #090d16; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 0.75rem; cursor: pointer; }
 
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(9, 13, 22, 0.85); backdrop-filter: blur(8px); justify-content: center; align-items: center; padding: 1.5rem; }
-        .modal-content { background: var(--surface); padding: 1.5rem; border-radius: 24px; max-width: 380px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+        .modal-content { background: var(--surface); padding: 1.75rem; border-radius: 24px; max-width: 400px; width: 100%; text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px rgba(0,0,0,0.8); animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes modalPop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .modal-img { width: 100%; height: 160px; border-radius: 16px; object-fit: cover; margin-bottom: 1rem; border: 1px solid var(--border); }
         .close-modal { background: var(--border); color: var(--text-main); border: none; padding: 0.75rem; border-radius: 12px; cursor: pointer; font-weight: 700; width: 100%; transition: background 0.2s; margin-top: 0.5rem; }
@@ -927,7 +923,6 @@ def serve_mobile_frontend():
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
-        
         .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 14px; border-radius: 12px; border: 1px solid var(--border); transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         .pin-display { background: var(--surface); padding: 8px; text-align: center; font-size: 1.3rem; font-weight: 800; color: var(--success); letter-spacing: 3px; border-radius: 6px; margin: 8px 0; border: 1px dashed var(--border); }
         
@@ -957,35 +952,39 @@ def serve_mobile_frontend():
 <body>
     <div id="toast-banner">✓ Action completed successfully!</div>
 
-    <!-- STAFF / ADMIN LOGIN GATE MODAL -->
-    <div id="staff-login-modal" class="modal" style="display: none;">
+    <!-- OWNER ADMIN LOGIN MODAL -->
+    <div id="admin-login-modal" class="modal">
         <div class="modal-content">
             <div class="logo" style="margin-bottom: 0.5rem;">smart<span>Table</span></div>
-            <h3 id="staff-modal-title" style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Staff & Admin Login</h3>
-            <p id="staff-modal-desc" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Select role to authorize dashboard access</p>
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.25rem;">Owner Control Center</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Enter manager username & password</p>
             
-            <div class="auth-sub-toggle" style="margin-bottom: 1rem;">
-                <button class="auth-toggle-btn active" id="btn-role-admin" onclick="switchStaffRole('admin')">👑 Owner Admin</button>
-                <button class="auth-toggle-btn" id="btn-role-worker" onclick="switchStaffRole('worker')">👨‍🍳 Staff Worker</button>
-            </div>
+            <label>Username</label>
+            <input type="text" id="owner-user" placeholder="admin" value="admin" />
+            
+            <label>Password</label>
+            <input type="password" id="owner-pass" placeholder="admin123" />
+            
+            <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.5rem;">Authorize & Open Dashboard</button>
+            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.5rem;">Return to Client App</button>
+        </div>
+    </div>
 
-            <div id="staff-form-admin">
-                <label id="lbl-admin-user">Username</label>
-                <input type="text" id="owner-user" placeholder="admin" value="admin" />
-                <label id="lbl-admin-pass">Password</label>
-                <input type="password" id="owner-pass" placeholder="admin123" />
-                <button class="btn-main" onclick="loginOwner()" style="margin-top: 0.5rem;" id="btn-auth-admin">Authorize Admin Portal</button>
-            </div>
-
-            <div id="staff-form-worker" class="hidden">
-                <label id="lbl-worker-id">Worker ID / Phone</label>
-                <input type="text" id="worker-id-input" placeholder="e.g., staff1" />
-                <label id="lbl-worker-pass">Password</label>
-                <input type="password" id="worker-pass-input" placeholder="Worker Password" />
-                <button class="btn-main" onclick="loginWorker()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;" id="btn-auth-worker">Authorize Staff Portal</button>
-            </div>
-
-            <button class="close-modal" onclick="document.getElementById('staff-login-modal').style.display='none'" style="margin-top: 1rem;" id="btn-cancel-modal">Cancel</button>
+    <!-- STAFF WORKER LOGIN MODAL -->
+    <div id="worker-login-modal" class="modal">
+        <div class="modal-content">
+            <div class="logo" style="margin-bottom: 0.5rem;">smart<span>Table</span></div>
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--primary); margin-bottom: 0.25rem;">Staff Worker Portal</h3>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1.25rem;">Authorized staff access only</p>
+            
+            <label>Worker ID</label>
+            <input type="text" id="worker-id-input" placeholder="e.g. staff1" />
+            
+            <label>Password</label>
+            <input type="password" id="worker-pass-input" placeholder="Worker password" />
+            
+            <button class="btn-main" onclick="loginWorker()" style="background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%); color: #090d16; margin-top: 0.5rem;">Authorize Staff Portal</button>
+            <button class="close-modal" onclick="window.location.href='/'" style="margin-top: 0.5rem;">Return to Client App</button>
         </div>
     </div>
 
@@ -996,7 +995,7 @@ def serve_mobile_frontend():
                 <option value="fr">🇫🇷 Français</option>
                 <option value="ar">🇲🇦 العربية</option>
             </select>
-            <a onclick="openStaffLoginModal()" class="staff-portal-btn" id="nav-staff-login">🔒 Staff Portal</a>
+            <a href="/?mode=worker" class="staff-portal-btn" id="nav-staff-login">🔒 Staff Portal</a>
         </div>
 
         <div class="brand-header">
@@ -1397,7 +1396,6 @@ def serve_mobile_frontend():
         let lockedTableNumber = null;
         let activeQueueCache = [];
         let previousQueueCount = 0;
-        let currentRole = 'admin'; // 'admin' or 'worker'
         let currentLang = 'en';
 
         const translations = {
@@ -1556,7 +1554,7 @@ def serve_mobile_frontend():
             document.getElementById('app-subtitle').innerText = t.subtitle;
             document.getElementById('tab-btn-rewards').innerText = t.tabRewards;
             document.getElementById('tab-btn-menu').innerText = t.tabMenu;
-            document.getElementById('nav-staff-login').innerText = t.staffLogin;
+            document.getElementById('nav-staff-login').innerHTML = '🔒 ' + t.staffLogin;
             document.getElementById('btn-toggle-signin').innerText = t.signIn;
             document.getElementById('btn-toggle-register').innerText = t.register;
             document.getElementById('txt-signin-title').innerText = t.customerSignIn;
@@ -1609,8 +1607,17 @@ def serve_mobile_frontend():
             loadRestaurantSettings();
             
             const urlParams = new URLSearchParams(window.location.search);
+            const modeParam = urlParams.get('mode');
             const tableParam = urlParams.get('table');
             const tableContainer = document.getElementById('table-selection-container');
+
+            if(modeParam === 'admin') {
+                document.getElementById('admin-login-modal').style.display = 'flex';
+                document.getElementById('worker-login-modal').style.display = 'none';
+            } else if(modeParam === 'worker') {
+                document.getElementById('worker-login-modal').style.display = 'flex';
+                document.getElementById('admin-login-modal').style.display = 'none';
+            }
             
             if(tableParam) {
                 lockedTableNumber = tableParam.trim();
@@ -1631,32 +1638,10 @@ def serve_mobile_frontend():
                 document.getElementById('place-order-btn').style.cursor = 'not-allowed';
             }
 
-            if(urlParams.get('mode') === 'admin') {
-                openStaffLoginModal();
-            } else {
+            if(modeParam !== 'admin' && modeParam !== 'worker') {
                 loadMenu();
             }
         };
-
-        function openStaffLoginModal() {
-            document.getElementById('staff-login-modal').style.display = 'flex';
-        }
-
-        function switchStaffRole(role) {
-            currentRole = role;
-            document.getElementById('btn-role-admin').classList.remove('active');
-            document.getElementById('btn-role-worker').classList.remove('active');
-            document.getElementById('staff-form-admin').classList.add('hidden');
-            document.getElementById('staff-form-worker').classList.add('hidden');
-
-            if(role === 'admin') {
-                document.getElementById('btn-role-admin').classList.add('active');
-                document.getElementById('staff-form-admin').classList.remove('hidden');
-            } else {
-                document.getElementById('btn-role-worker').classList.add('active');
-                document.getElementById('staff-form-worker').classList.remove('hidden');
-            }
-        }
 
         async function loginOwner() {
             const user = document.getElementById('owner-user').value.trim();
@@ -1701,17 +1686,16 @@ def serve_mobile_frontend():
         }
 
         function enterDashboard(role, name) {
-            document.getElementById('staff-login-modal').style.display = 'none';
+            document.getElementById('admin-login-modal').style.display = 'none';
+            document.getElementById('worker-login-modal').style.display = 'none';
             document.getElementById('client-nav').classList.add('hidden');
             document.getElementById('tab-rewards').classList.add('hidden');
             document.getElementById('tab-admin').classList.remove('hidden');
             document.getElementById('app-subtitle').innerText = role === 'admin' ? "Owner Control Center" : `Staff Portal (${name})`;
 
-            // Restrict access for workers vs admin
             const restrictedTabs = document.querySelectorAll('.admin-restricted');
             if(role === 'worker') {
                 restrictedTabs.forEach(el => el.style.display = 'none');
-                // Hide restricted subnav buttons
                 ['menu', 'reports', 'rewards', 'analytics', 'settings'].forEach(s => {
                     const btn = document.getElementById('sub-btn-' + s);
                     if(btn) btn.style.display = 'none';
@@ -2287,7 +2271,7 @@ def serve_mobile_frontend():
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
                 gain.gain.setValueAtTime(0.15, ctx.currentTime);
                 osc.connect(gain);
                 gain.connect(ctx.destination);
@@ -2328,7 +2312,7 @@ def serve_mobile_frontend():
                                 <span style="font-size: 0.75rem; font-weight: 800; color: var(--text-muted);">${diffMinutes}m ago</span>
                             </div>
                             <div style="font-weight: 700; font-size: 0.95rem; color: var(--accent); margin-bottom: 2px;">👤 ${item.customer_name} (${item.customer_phone || 'Walk-in'})</div>
-                            <div style="font-weight: 700; font-size: 0.9output; color: var(--text-main);">${item.reward_item}</div>
+                            <div style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">${item.reward_item}</div>
                             ${item.security_pin !== 'POS' && item.security_pin !== 'APP' ? `<div class="pin-display">PIN: ${item.security_pin}</div>` : ''}
                             <button class="btn-main" onclick="fulfillRedemption(${item.id})" style="background: var(--success); color: white; padding: 8px; font-size: 0.8rem; margin-top: 6px;">Mark Fulfilled ✓</button>
                         </div>
