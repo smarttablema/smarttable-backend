@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.6.1")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.7.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -843,7 +843,7 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH PROFESSIONAL FOOTER SPACING & MODAL NAVIGATION ---
+# --- FRONTEND UI WITH COMPLETE LOCALIZATION, CENTERED WORKER ICONS & LOGOUT ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -955,11 +955,12 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
 
-        .admin-subnav { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; background: var(--bg-deep); padding: 4px; border-radius: 12px; margin-bottom: 1rem; border: 1px solid var(--border); overflow-x: auto; }
-        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 48px; padding: 2px 1px; text-align: center; border-radius: 7px; font-size: 0.5rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.2s ease; }
-        .admin-sub-btn span.nav-icon { font-size: 0.9rem; margin-bottom: 2px; display: block; line-height: 1; }
-        .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; }
-        .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        /* PERFECTLY CENTERED & PROFESSIONAL ADMIN / WORKER SUBNAV */
+        .admin-subnav { display: grid; gap: 4px; background: var(--bg-deep); padding: 6px; border-radius: 14px; margin-bottom: 1rem; border: 1px solid var(--border); overflow-x: auto; box-shadow: inset 0 2px 6px rgba(0,0,0,0.4); }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.6rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.25s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 1.1rem; margin-bottom: 3px; display: block; line-height: 1; text-align: center; width: 100%; }
+        .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; text-align: center; }
+        .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
         
         .queue-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 8px; }
         .redemption-card { background: var(--bg-deep); border-left: 5px solid var(--success); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
@@ -980,10 +981,10 @@ def serve_mobile_frontend():
         .dash-action-btn { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); padding: 5px 10px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         .logout-btn { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); padding: 5px 12px; border-radius: 7px; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
         
-        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 8px 12px; border-radius: 10px; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.75rem; }
-        .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 10px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; text-align: center; margin-bottom: 0.75rem; line-height: 1.4; }
+        .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.85rem; box-shadow: 0 4px 12px rgba(56, 189, 248, 0.1); }
+        .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700; text-align: center; margin-bottom: 0.85rem; line-height: 1.4; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1); }
 
-        /* PROFESSIONAL FOOTER BAR: PERFECT SPACING BETWEEN LANGUAGES & SUPPORT */
+        /* PROFESSIONAL FOOTER BAR */
         .app-footer-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-top: 1rem; padding: 0 0.5rem; font-size: 0.75rem; color: var(--text-muted); gap: 1rem; }
         .app-footer-bar a { color: var(--primary); text-decoration: none; font-weight: 700; white-space: nowrap; }
         .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 14px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
@@ -1192,7 +1193,7 @@ def serve_mobile_frontend():
                     <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-live-queue">⚡ Live Orders & Redemptions Queue</h3>
                     <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-queue-desc">Real-time kitchen orders & customer redemptions</p>
                     <div id="admin-queue-container" class="queue-grid">
-                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No active orders right now.</div>
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;" id="txt-no-orders">No active orders right now.</div>
                     </div>
                 </div>
             </div>
@@ -1200,18 +1201,18 @@ def serve_mobile_frontend():
             <!-- 2. MENU -->
             <div id="admin-sub-menu" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📖 Menu Management</h3>
-                    <label>Category</label>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-admin-menu-title">📖 Menu Management</h3>
+                    <label id="lbl-adm-cat">Category</label>
                     <input type="text" id="admin-cat" placeholder="e.g., Burgers, Drinks" />
-                    <label>Item Name</label>
+                    <label id="lbl-adm-name">Item Name</label>
                     <input type="text" id="admin-name" placeholder="Item Name" />
-                    <label>Price (MAD)</label>
+                    <label id="lbl-adm-price">Price (MAD)</label>
                     <input type="text" id="admin-price" placeholder="e.g. 65" />
-                    <label>Image URL (Optional)</label>
+                    <label id="lbl-adm-img">Image URL (Optional)</label>
                     <input type="text" id="admin-img" placeholder="https://..." />
-                    <button class="btn-main" onclick="addAdminMenu()" style="margin-bottom: 0.85rem; padding: 0.55rem; font-size: 0.78rem;">+ Add Menu Item</button>
+                    <button class="btn-main" onclick="addAdminMenu()" style="margin-bottom: 0.85rem; padding: 0.55rem; font-size: 0.78rem;" id="btn-add-item">+ Add Menu Item</button>
                     
-                    <label>Existing Items:</label>
+                    <label id="lbl-adm-existing">Existing Items:</label>
                     <div id="admin-menu-list" style="max-height: 140px; overflow-y: auto;"></div>
                 </div>
             </div>
@@ -1219,37 +1220,37 @@ def serve_mobile_frontend():
             <!-- 3. REPORTS -->
             <div id="admin-sub-reports" class="admin-section hidden admin-restricted">
                 <div class="card" style="text-align: center;">
-                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📊 Daily Shift Z-Report</h3>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-rep-title">📊 Daily Shift Z-Report</h3>
                     <div id="shift-label-display" style="font-size: 0.68rem; color: var(--success); margin-bottom: 0.75rem; font-weight: 700;">Active Shift: 07:00 - 00:00</div>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
                         <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border);">
-                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Total Revenue</div>
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;" id="lbl-rep-rev">Total Revenue</div>
                             <div id="rep-revenue" style="font-size: 1.1rem; font-weight: 800; color: var(--success);">0 MAD</div>
                         </div>
                         <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border);">
-                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Orders Sold</div>
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;" id="lbl-rep-orders">Orders Sold</div>
                             <div id="rep-orders" style="font-size: 1.1rem; font-weight: 800; color: var(--primary);">0</div>
                         </div>
                     </div>
 
-                    <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.55rem; font-size: 0.78rem; border-radius: 9px;">🗑️ Clear / Reset Shift Data</button>
+                    <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.55rem; font-size: 0.78rem; border-radius: 9px;" id="btn-clear-rep">🗑️ Clear / Reset Shift Data</button>
                 </div>
             </div>
 
             <!-- 4. REWARDS -->
             <div id="admin-sub-rewards" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">🎁 Rewards Builder</h3>
-                    <label>Reward Title</label>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-rew-builder-title">🎁 Rewards Builder</h3>
+                    <label id="lbl-rew-title">Reward Title</label>
                     <input type="text" id="reward-title-input" placeholder="e.g. Free Gourmet Dessert" />
-                    <label>Points Required</label>
+                    <label id="lbl-rew-cost">Points Required</label>
                     <input type="number" id="reward-cost-input" placeholder="e.g. 100" />
-                    <label>Image URL (Optional)</label>
+                    <label id="lbl-rew-img">Image URL (Optional)</label>
                     <input type="text" id="reward-img-input" placeholder="https://..." />
-                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.55rem; font-size: 0.78rem; margin-bottom: 0.85rem;">+ Create Reward</button>
+                    <button class="btn-main" onclick="addRewardTier()" style="background: #3b82f6; color: white; padding: 0.55rem; font-size: 0.78rem; margin-bottom: 0.85rem;" id="btn-create-rew">+ Create Reward</button>
                     
-                    <label>Configured Rewards:</label>
+                    <label id="lbl-rew-configured">Configured Rewards:</label>
                     <div id="admin-rewards-list" style="max-height: 140px; overflow-y: auto;"></div>
                 </div>
             </div>
@@ -1278,7 +1279,7 @@ def serve_mobile_frontend():
 
                     <label id="lbl-pos-cart">Order Cart (Use + / - to adjust quantities):</label>
                     <div id="pos-cart-box" class="cart-box">
-                        <div style="text-align: center; color: var(--text-muted);">Cart is empty</div>
+                        <div style="text-align: center; color: var(--text-muted);" id="txt-pos-empty">Cart is empty</div>
                     </div>
 
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-weight: 800; font-size: 0.9rem;">
@@ -1293,8 +1294,8 @@ def serve_mobile_frontend():
             <!-- FLOOR PLAN VIEW -->
             <div id="admin-sub-floor" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">🪑 Visual Table Floor Plan</h3>
-                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;">Live status across restaurant tables</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-floor-title">🪑 Visual Table Floor Plan</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-floor-desc">Live status across restaurant tables</p>
                     <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.72rem; grid-column: span 2;">Loading floor map...</div>
                     </div>
@@ -1304,21 +1305,21 @@ def serve_mobile_frontend():
             <!-- SMART ANALYTICS & CRM -->
             <div id="admin-sub-analytics" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">📈 Smart Analytics & CRM</h3>
-                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;">Monthly performance and customer retention</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-analytics-title">📈 Smart Analytics & CRM</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-analytics-desc">Monthly performance and customer retention</p>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.85rem;">
                         <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border); text-align: center;">
-                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">This Month Revenue</div>
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;" id="lbl-ana-month">This Month Revenue</div>
                             <div id="analytics-monthly-rev" style="font-size: 1.05rem; font-weight: 800; color: var(--success);">0 MAD</div>
                         </div>
                         <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border); text-align: center;">
-                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;">Monthly Growth</div>
+                            <div style="font-size: 0.62rem; color: var(--text-muted); text-transform: uppercase;" id="lbl-ana-growth">Monthly Growth</div>
                             <div id="analytics-growth-pct" style="font-size: 1.05rem; font-weight: 800; color: var(--primary);">+0%</div>
                         </div>
                     </div>
 
-                    <label>⭐ Top VIP Spenders Leaderboard:</label>
+                    <label id="lbl-ana-vip">⭐ Top VIP Spenders Leaderboard:</label>
                     <div id="analytics-vip-list" style="max-height: 120px; overflow-y: auto;">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">Loading VIPs...</div>
                     </div>
@@ -1328,110 +1329,115 @@ def serve_mobile_frontend():
             <!-- 7. SETTINGS & STAFF MANAGEMENT -->
             <div id="admin-sub-settings" class="admin-section hidden admin-restricted">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);">⚙️ Campaign, Shift & Staff Settings</h3>
+                    <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-settings-title">⚙️ Campaign, Shift & Staff Settings</h3>
                     
-                    <label>Google Review Points</label>
+                    <label id="lbl-set-review">Google Review Points</label>
                     <input type="number" id="setting-review-pts" placeholder="e.g. 50" />
                     
-                    <label>Friend Referral Points</label>
+                    <label id="lbl-set-referral">Friend Referral Points</label>
                     <input type="number" id="setting-referral-pts" placeholder="e.g. 50" />
                     
-                    <label>Cashback Percentage (%)</label>
+                    <label id="lbl-set-cb">Cashback Percentage (%)</label>
                     <input type="number" step="0.5" id="setting-cb-pct" placeholder="e.g. 10" />
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 0.75rem;">
                         <div>
-                            <label>Shift Open</label>
+                            <label id="lbl-set-open">Shift Open</label>
                             <input type="time" id="setting-open-time" value="07:00" />
                         </div>
                         <div>
-                            <label>Shift Close</label>
+                            <label id="lbl-set-close">Shift Close</label>
                             <input type="time" id="setting-close-time" value="00:00" />
                         </div>
                     </div>
 
-                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.65rem; font-size: 0.8rem; margin-bottom: 1rem;">Save Campaign Settings ✓</button>
+                    <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.65rem; font-size: 0.8rem; margin-bottom: 1rem;" id="btn-save-settings">Save Campaign Settings ✓</button>
 
                     <!-- WORKER MANAGEMENT INSIDE SETTINGS -->
                     <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-bottom: 0.75rem;">
-                        <label style="color: var(--primary);">👥 Manage Staff Workers (Add / Delete)</label>
+                        <label style="color: var(--primary);" id="lbl-set-manage-staff">👥 Manage Staff Workers (Add / Delete)</label>
                         <input type="text" id="new-worker-id" placeholder="Worker ID / Username (e.g. staff2)" />
                         <input type="text" id="new-worker-name" placeholder="Worker Full Name (e.g. Youssef Benali)" />
                         <input type="password" id="new-worker-pass" placeholder="Worker Login Password" />
                         <input type="password" id="new-worker-pin" placeholder="Worker Recovery PIN (4-Digits)" maxlength="4" />
-                        <button class="btn-main" onclick="createNewWorker()" style="background: var(--primary); color: #090d16; padding: 0.6rem; font-size: 0.78rem; margin-bottom: 0.75rem;">+ Create New Worker Account</button>
+                        <button class="btn-main" onclick="createNewWorker()" style="background: var(--primary); color: #090d16; padding: 0.6rem; font-size: 0.78rem; margin-bottom: 0.75rem;" id="btn-add-staff">+ Create New Worker Account</button>
                         
-                        <label>Active Staff Accounts:</label>
+                        <label id="lbl-set-active-staff">Active Staff Accounts:</label>
                         <div id="admin-workers-list" style="max-height: 120px; overflow-y: auto;">
                             <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">Loading staff...</div>
                         </div>
                     </div>
 
-                    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem;">
-                        <label style="color: var(--accent);">🔒 Change Owner Password</label>
+                    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-bottom: 1rem;">
+                        <label style="color: var(--accent);" id="lbl-set-change-pwd">🔒 Change Owner Password</label>
                         <input type="password" id="admin-old-pass" placeholder="Current Admin Password" />
                         <input type="password" id="admin-new-pass" placeholder="New Admin Password" />
-                        <button class="btn-main" onclick="changeAdminPassword()" style="background: var(--accent); color: #090d16; padding: 0.55rem; font-size: 0.75rem;">Update Admin Password</button>
+                        <button class="btn-main" onclick="changeAdminPassword()" style="background: var(--accent); color: #090d16; padding: 0.55rem; font-size: 0.75rem;" id="btn-update-pwd">Update Admin Password</button>
                     </div>
                 </div>
             </div>
+
+            <!-- ADMIN / WORKER LOGOUT BUTTON -->
+            <div style="text-align: center; margin-top: 1rem;">
+                <button class="logout-btn" onclick="logoutAdminPanel()" style="width: 100%; padding: 0.7rem; font-size: 0.85rem; border-radius: 12px;" id="btn-admin-logout">🚪 Log Out of Panel</button>
+            </div>
         </div>
 
-        <!-- PROFESSIONAL FOOTER BAR: PERFECT SPACING -->
+        <!-- PROFESSIONAL FOOTER BAR -->
         <div class="app-footer-bar">
             <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
                 <option value="en">🇺🇸 EN</option>
                 <option value="fr">🇫🇷 FR</option>
                 <option value="ar">🇲🇦 AR</option>
             </select>
-            <div>Support: <a href="mailto:contact@smartable.online">contact@smartable.online</a></div>
+            <div id="support-text-label">Support: <a href="mailto:contact@smartable.online">contact@smartable.online</a></div>
         </div>
     </div>
 
     <!-- MODALS -->
     <div id="client-password-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;">Change Password</h3>
-            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">Update your account password securely:</p>
-            <label style="text-align: left;">Current Password</label>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;" id="mod-pwd-title">Change Password</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;" id="mod-pwd-desc">Update your account password securely:</p>
+            <label style="text-align: left;" id="mod-pwd-curr">Current Password</label>
             <input type="password" id="client-old-pass" placeholder="Current password" />
-            <label style="text-align: left;">New Password</label>
+            <label style="text-align: left;" id="mod-pwd-new">New Password</label>
             <input type="password" id="client-new-pass" placeholder="New password" />
-            <label style="text-align: left;">Repeat New Password</label>
+            <label style="text-align: left;" id="mod-pwd-repeat">Repeat New Password</label>
             <input type="password" id="client-repeat-pass" placeholder="Confirm new password" />
-            <button class="btn-main" onclick="submitClientPasswordChange()" style="margin-bottom: 0.4rem; margin-top: 0.4rem;">Save New Password ✓</button>
-            <button class="close-modal" onclick="document.getElementById('client-password-modal').style.display='none'">Cancel</button>
+            <button class="btn-main" onclick="submitClientPasswordChange()" style="margin-bottom: 0.4rem; margin-top: 0.4rem;" id="mod-pwd-save">Save New Password ✓</button>
+            <button class="close-modal" onclick="document.getElementById('client-password-modal').style.display='none'" id="mod-pwd-cancel">Cancel</button>
         </div>
     </div>
 
     <div id="clear-reports-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--danger); margin-bottom: 0.35rem;">Reset Shift Data?</h3>
-            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:</p>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--danger); margin-bottom: 0.35rem;" id="mod-rep-title">Reset Shift Data?</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;" id="mod-rep-desc">This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:</p>
             <input type="password" id="reset-admin-pwd" placeholder="Enter admin password" style="margin-bottom: 0.85rem;" />
-            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.4rem;">Confirm & Wipe Shift</button>
-            <button class="close-modal" onclick="document.getElementById('clear-reports-modal').style.display='none'">Cancel</button>
+            <button class="btn-main" onclick="executeClearReports()" style="background: var(--danger); color: white; margin-bottom: 0.4rem;" id="mod-rep-confirm">Confirm & Wipe Shift</button>
+            <button class="close-modal" onclick="document.getElementById('clear-reports-modal').style.display='none'" id="mod-rep-cancel">Cancel</button>
         </div>
     </div>
 
     <div id="redeem-name-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;">Claim Reward</h3>
-            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;">Please enter your name for the waiter:</p>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--accent); margin-bottom: 0.35rem;" id="mod-claim-title">Claim Reward</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.85rem;" id="mod-claim-desc">Please enter your name for the waiter:</p>
             <input type="text" id="customer-name-input" placeholder="e.g., Mohammed Daou" style="margin-bottom: 0.85rem;" />
-            <button class="btn-main" onclick="confirmRedeem()" style="margin-bottom: 0.4rem;">Confirm & Get PIN</button>
-            <button class="close-modal" onclick="document.getElementById('redeem-name-modal').style.display='none'">Cancel</button>
+            <button class="btn-main" onclick="confirmRedeem()" style="margin-bottom: 0.4rem;" id="mod-claim-confirm">Confirm & Get PIN</button>
+            <button class="close-modal" onclick="document.getElementById('redeem-name-modal').style.display='none'" id="mod-claim-cancel">Cancel</button>
         </div>
     </div>
 
     <div id="voucher-modal" class="modal">
         <div class="modal-content">
-            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--success); margin-bottom: 0.2rem;">Reward Unlocked!</h3>
-            <p style="font-size: 0.72rem; color: var(--text-muted);">Show PIN to waiter:</p>
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: var(--success); margin-bottom: 0.2rem;" id="mod-vouch-title">Reward Unlocked!</h3>
+            <p style="font-size: 0.72rem; color: var(--text-muted);" id="mod-vouch-desc">Show PIN to waiter:</p>
             <div id="modal-voucher-code" class="voucher-code-box">----</div>
             <img id="modal-voucher-img" class="modal-img" src="" style="height: 110px; margin-bottom: 0.4rem;" />
             <div id="modal-voucher-title" style="font-size: 0.82rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.65rem;"></div>
-            <button class="close-modal" onclick="closeVoucherModal()">Done</button>
+            <button class="close-modal" onclick="closeVoucherModal()" id="mod-vouch-done">Done</button>
         </div>
     </div>
 
@@ -1440,7 +1446,7 @@ def serve_mobile_frontend():
             <img id="modal-img-tag" class="modal-img" src="" />
             <h3 id="modal-title" style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.2rem; color: var(--text-main);"></h3>
             <div id="modal-price" style="font-size: 0.95rem; font-weight: 800; color: var(--accent); margin-bottom: 0.4rem;"></div>
-            <button class="close-modal" onclick="closeModal()">Close Preview</button>
+            <button class="close-modal" onclick="closeModal()" id="mod-img-close">Close Preview</button>
         </div>
     </div>
 
@@ -1498,11 +1504,71 @@ def serve_mobile_frontend():
                 navInsights: "Insights",
                 navSettings: "Settings",
                 liveQueueTitle: "⚡ Live Orders & Redemptions Queue",
+                queueDesc: "Real-time kitchen orders & customer redemptions",
+                noOrders: "No active orders right now.",
+                adminMenuTitle: "📖 Menu Management",
+                admCat: "Category",
+                admName: "Item Name",
+                admPrice: "Price (MAD)",
+                admImg: "Image URL (Optional)",
+                addItemBtn: "+ Add Menu Item",
+                admExisting: "Existing Items:",
+                repTitle: "📊 Daily Shift Z-Report",
+                repRev: "Total Revenue",
+                repOrders: "Orders Sold",
+                clearRepBtn: "🗑️ Clear / Reset Shift Data",
+                rewBuilderTitle: "🎁 Rewards Builder",
+                rewTitle: "Reward Title",
+                rewCost: "Points Required",
+                rewImg: "Image URL (Optional)",
+                createRewBtn: "+ Create Reward",
+                rewConfigured: "Configured Rewards:",
                 posTitle: "🛒 Touchscreen POS Builder",
                 posDesc: "Select table & tap items to build and adjust order cart",
                 posTableLbl: "Select Table Number / Walk-in",
                 posCartLbl: "Order Cart (Use + / - to adjust quantities):",
-                confirmPos: "Confirm & Submit Order ✓"
+                posEmpty: "Cart is empty",
+                confirmPos: "Confirm & Submit Order ✓",
+                floorTitle: "🪑 Visual Table Floor Plan",
+                floorDesc: "Live status across restaurant tables",
+                analyticsTitle: "📈 Smart Analytics & CRM",
+                analyticsDesc: "Monthly performance and customer retention",
+                anaMonth: "This Month Revenue",
+                anaGrowth: "Monthly Growth",
+                anaVip: "⭐ Top VIP Spenders Leaderboard:",
+                settingsTitle: "⚙️ Campaign, Shift & Staff Settings",
+                setReview: "Google Review Points",
+                setReferral: "Friend Referral Points",
+                setCb: "Cashback Percentage (%)",
+                setOpen: "Shift Open",
+                setClose: "Shift Close",
+                saveSettingsBtn: "Save Campaign Settings ✓",
+                manageStaffLbl: "👥 Manage Staff Workers (Add / Delete)",
+                addStaffBtn: "+ Create New Worker Account",
+                activeStaffLbl: "Active Staff Accounts:",
+                changePwdLbl: "🔒 Change Owner Password",
+                updatePwdBtn: "Update Admin Password",
+                adminLogout: "🚪 Log Out of Panel",
+                supportLbl: "Support:",
+                modPwdTitle: "Change Password",
+                modPwdDesc: "Update your account password securely:",
+                modPwdCurr: "Current Password",
+                modPwdNew: "New Password",
+                modPwdRepeat: "Repeat New Password",
+                modPwdSave: "Save New Password ✓",
+                modPwdCancel: "Cancel",
+                modRepTitle: "Reset Shift Data?",
+                modRepDesc: "This will permanently wipe daily revenue and cashback logs. Enter your admin password to confirm:",
+                modRepConfirm: "Confirm & Wipe Shift",
+                modRepCancel: "Cancel",
+                modClaimTitle: "Claim Reward",
+                modClaimDesc: "Please enter your name for the waiter:",
+                modClaimConfirm: "Confirm & Get PIN",
+                modClaimCancel: "Cancel",
+                modVouchTitle: "Reward Unlocked!",
+                modVouchDesc: "Show PIN to waiter:",
+                modVouchDone: "Done",
+                modImgClose: "Close Preview"
             },
             fr: {
                 subtitle: "POS & Fidélité Entreprise",
@@ -1545,11 +1611,71 @@ def serve_mobile_frontend():
                 navInsights: "Analyses",
                 navSettings: "Paramètres",
                 liveQueueTitle: "⚡ File d'attente & Commandes en direct",
-                posTitle: "🛒 Caisse Tactile & Commandes",
+                queueDesc: "Commandes de cuisine en temps réel",
+                noOrders: "Aucune commande active pour le moment.",
+                adminMenuTitle: "📖 Gestion du Menu",
+                admCat: "Catégorie",
+                admName: "Nom de l'article",
+                admPrice: "Prix (MAD)",
+                admImg: "URL Image (Optionnel)",
+                addItemBtn: "+ Ajouter l'article",
+                admExisting: "Articles Existants:",
+                repTitle: "📊 Rapport Z Quotidien",
+                repRev: "Revenu Total",
+                repOrders: "Commandes Vendues",
+                clearRepBtn: "🗑️ Réinitialiser les Données",
+                rewBuilderTitle: "🎁 Créateur de Récompenses",
+                rewTitle: "Titre de la Récompense",
+                rewCost: "Points Requis",
+                rewImg: "URL Image (Optionnel)",
+                createRewBtn: "+ Créer la Récompense",
+                rewConfigured: "Récompenses Configurées:",
+                posTitle: "🛒 Caisse Tactile",
                 posDesc: "Sélectionnez la table et gérez le panier",
-                posTableLbl: "Sélectionner le Numéro de Table",
+                posTableLbl: "Sélectionner la Table",
                 posCartLbl: "Panier (Utilisez + / - pour ajuster) :",
-                confirmPos: "Confirmer & Soumettre la Commande ✓"
+                posEmpty: "Panier vide",
+                confirmPos: "Confirmer & Soumettre la Commande ✓",
+                floorTitle: "🪑 Plan de Salle Visuel",
+                floorDesc: "Statut en direct des tables",
+                analyticsTitle: "📈 Analyses & CRM",
+                analyticsDesc: "Performance mensuelle et rétention client",
+                anaMonth: "Revenu du Mois",
+                anaGrowth: "Croissance Mensuelle",
+                anaVip: "⭐ Meilleurs Clients VIP :",
+                settingsTitle: "⚙️ Paramètres & Personnel",
+                setReview: "Points d'Avis Google",
+                setReferral: "Points de Parrainage",
+                setCb: "Pourcentage de Cashback (%)",
+                setOpen: "Ouverture Shift",
+                setClose: "Fermeture Shift",
+                saveSettingsBtn: "Enregistrer les Paramètres ✓",
+                manageStaffLbl: "👥 Gérer les Employés (Ajouter / Supprimer)",
+                addStaffBtn: "+ Créer un Compte Employé",
+                activeStaffLbl: "Comptes Actifs:",
+                changePwdLbl: "🔒 Changer le Mot de Passe Admin",
+                updatePwdBtn: "Mettre à jour le Mot de Passe",
+                adminLogout: "🚪 Déconnexion du Panneau",
+                supportLbl: "Support :",
+                modPwdTitle: "Modifier le Mot de Passe",
+                modPwdDesc: "Mettez à jour votre mot de passe en toute sécurité :",
+                modPwdCurr: "Mot de Passe Actuel",
+                modPwdNew: "Nouveau Mot de Passe",
+                modPwdRepeat: "Répéter le Nouveau Mot de Passe",
+                modPwdSave: "Enregistrer ✓",
+                modPwdCancel: "Annuler",
+                modRepTitle: "Réinitialiser les Données ?",
+                modRepDesc: "Ceci effacera définitivement les revenus et les logs. Entrez votre mot de passe admin :",
+                modRepConfirm: "Confirmer & Effacer",
+                modRepCancel: "Annuler",
+                modClaimTitle: "Réclamer la Récompense",
+                modClaimDesc: "Veuillez entrer votre nom pour le serveur :",
+                modClaimConfirm: "Confirmer & Obtenir le PIN",
+                modClaimCancel: "Annuler",
+                modVouchTitle: "Récompense Débloquée !",
+                modVouchDesc: "Montrez le PIN au serveur :",
+                modVouchDone: "Terminé",
+                modImgClose: "Fermer l'aperçu"
             },
             ar: {
                 subtitle: "نظام نقاط الولاء وإدارة المطاعم",
@@ -1592,21 +1718,90 @@ def serve_mobile_frontend():
                 navInsights: "التحليلات",
                 navSettings: "الإعدادات",
                 liveQueueTitle: "⚡ قائمة الطلبات الحية والوجبات الجاهزة",
+                queueDesc: "طلبات المطبخ والاسترداد الفوري",
+                noOrders: "لا توجد طلبات نشطة حالياً.",
+                adminMenuTitle: "📖 إدارة قائمة الطعام",
+                admCat: "الفئة",
+                admName: "اسم الصنف",
+                admPrice: "السعر (درهم)",
+                admImg: "رابط الصورة (اختياري)",
+                addItemBtn: "+ إضافة صنف للقائمة",
+                admExisting: "الأصناف الحالية:",
+                repTitle: "📊 تقرير الإيرادات اليومي",
+                repRev: "إجمالي الإيرادات",
+                repOrders: "الطلبات المباعة",
+                clearRepBtn: "🗑️ مسح وتصفير بيانات الوردية",
+                rewBuilderTitle: "🎁 صانع المكافآت",
+                rewTitle: "عنوان المكافأة",
+                rewCost: "النقاط المطلوبة",
+                rewImg: "رابط الصورة (اختياري)",
+                createRewBtn: "+ إنشاء مكافأة جديدة",
+                rewConfigured: "المكافآت المفعلة:",
                 posTitle: "🛒 نقطة البيع السريعة للكاشير",
                 posDesc: "حدد الطاولة وأضف الأصناف وعدل الكميات بكل سهولة",
                 posTableLbl: "اختر الطاولة / سفري",
                 posCartLbl: "سلة الطلبات (استخدم + / - للتعديل):",
-                confirmPos: "تأكيد وإرسال الطلب ✓"
+                posEmpty: "السلة فارغة",
+                confirmPos: "تأكيد وإرسال الطلب ✓",
+                floorTitle: "🪑 مخطط الطاولات المرئي",
+                floorDesc: "الحالة الحية لجميع طاولات المطعم",
+                analyticsTitle: "📈 التحليلات الذكية وإدارة العملاء",
+                analyticsDesc: "الأداء الشهري ومعدل الاحتفاظ بالعملاء",
+                anaMonth: "إيرادات هذا الشهر",
+                anaGrowth: "النمو الشهري",
+                anaVip: "⭐ قائمة كبار العملاء (VIP):",
+                settingsTitle: "⚙️ إعدادات الحملات، الورديات والموظفين",
+                setReview: "نقاط تقييم قوقل",
+                setReferral: "نقاط دعوة الأصدقاء",
+                setCb: "نسبة الكاش باك (%)",
+                setOpen: "فتح الوردية",
+                setClose: "إغلاق الوردية",
+                saveSettingsBtn: "حفظ الإعدادات ✓",
+                manageStaffLbl: "👥 إدارة موظفي الطاقم (إضافة / حذف)",
+                addStaffBtn: "+ إنشاء حساب موظف جديد",
+                activeStaffLbl: "حسابات الموظفين النشطة:",
+                changePwdLbl: "🔒 تغيير كلمة مرور المالك",
+                updatePwdBtn: "تحديث كلمة المرور",
+                adminLogout: "🚪 تسجيل الخروج من اللوحة",
+                supportLbl: "الدعم الفني:",
+                modPwdTitle: "تغيير كلمة المرور",
+                modPwdDesc: "قم بتحديث كلمة المرور الخاصة بحسابك بأمان:",
+                modPwdCurr: "كلمة المرور الحالية",
+                modPwdNew: "كلمة المرور الجديدة",
+                modPwdRepeat: "تكرار كلمة المرور الجديدة",
+                modPwdSave: "حفظ كلمة المرور الجديدة ✓",
+                modPwdCancel: "إلغاء",
+                modRepTitle: "تصفير بيانات الوردية؟",
+                modRepDesc: "سيؤدي هذا إلى مسح الإيرادات وسجلات الكاش باك نهائياً. أدخل كلمة مرور المدير للتأكيد:",
+                modRepConfirm: "تأكيد ومسح الوردية",
+                modRepCancel: "إلغاء",
+                modClaimTitle: "استبدال المكافأة",
+                modClaimDesc: "الرجاء إدخال اسمك للويتر / النادل:",
+                modClaimConfirm: "تأكيد وإظهار الرمز السري",
+                modClaimCancel: "إلغاء",
+                modVouchTitle: "تم إلغاق المكافأة بنجاح!",
+                modVouchDesc: "اعرض الرمز السري للويتر:",
+                modVouchDone: "تم",
+                modImgClose: "إغلاق المعاينة"
             }
         };
 
         function changeLanguage(lang) {
             currentLang = lang;
             const t = translations[lang];
-            if (lang === 'ar') {
+            const isAr = (lang === 'ar');
+            
+            if (isAr) {
                 document.body.classList.add('lang-ar');
             } else {
                 document.body.classList.remove('lang-ar');
+            }
+
+            // Dynamic grid layout recalculation for admin subnav based on active language/role
+            const adminSubnav = document.getElementById('admin-subnav-container');
+            if(adminSubnav) {
+                const visibleButtons = adminSubnav.querySelectorAll('button:not([style*="display: none"])');
+                adminSubnav.style.gridTemplateColumns = `repeat(${visibleButtons.length}, 1fr)`;
             }
 
             document.getElementById('app-subtitle').innerText = t.subtitle;
@@ -1653,12 +1848,82 @@ def serve_mobile_frontend():
             document.getElementById('nav-t-floor').innerText = t.navFloor;
             document.getElementById('nav-t-analytics').innerText = t.navInsights;
             document.getElementById('nav-t-settings').innerText = t.navSettings;
+            
             document.getElementById('txt-live-queue').innerText = t.liveQueueTitle;
+            document.getElementById('txt-queue-desc').innerText = t.queueDesc;
+            document.getElementById('txt-admin-menu-title').innerText = t.adminMenuTitle;
+            document.getElementById('lbl-adm-cat').innerText = t.admCat;
+            document.getElementById('lbl-adm-name').innerText = t.admName;
+            document.getElementById('lbl-adm-price').innerText = t.admPrice;
+            document.getElementById('lbl-adm-img').innerText = t.admImg;
+            document.getElementById('btn-add-item').innerText = t.addItemBtn;
+            document.getElementById('lbl-adm-existing').innerText = t.admExisting;
+
+            document.getElementById('txt-rep-title').innerText = t.repTitle;
+            document.getElementById('lbl-rep-rev').innerText = t.repRev;
+            document.getElementById('lbl-rep-orders').innerText = t.repOrders;
+            document.getElementById('btn-clear-rep').innerText = t.clearRepBtn;
+
+            document.getElementById('txt-rew-builder-title').innerText = t.rewBuilderTitle;
+            document.getElementById('lbl-rew-title').innerText = t.rewTitle;
+            document.getElementById('lbl-rew-cost').innerText = t.rewCost;
+            document.getElementById('lbl-rew-img').innerText = t.rewImg;
+            document.getElementById('btn-create-rew').innerText = t.createRewBtn;
+            document.getElementById('lbl-rew-configured').innerText = t.rewConfigured;
+
             document.getElementById('txt-pos-title').innerText = t.posTitle;
             document.getElementById('txt-pos-desc').innerText = t.posDesc;
             document.getElementById('lbl-pos-table').innerText = t.posTableLbl;
             document.getElementById('lbl-pos-cart').innerText = t.posCartLbl;
+            document.getElementById('txt-pos-empty').innerText = t.posEmpty;
+            document.getElementById('lbl-pos-total').innerText = t.totalBill.replace(':', '');
             document.getElementById('btn-confirm-pos').innerText = t.confirmPos;
+
+            document.getElementById('txt-floor-title').innerText = t.floorTitle;
+            document.getElementById('txt-floor-desc').innerText = t.floorDesc;
+
+            document.getElementById('txt-analytics-title').innerText = t.analyticsTitle;
+            document.getElementById('txt-analytics-desc').innerText = t.analyticsDesc;
+            document.getElementById('lbl-ana-month').innerText = t.anaMonth;
+            document.getElementById('lbl-ana-growth').innerText = t.anaGrowth;
+            document.getElementById('lbl-ana-vip').innerText = t.anaVip;
+
+            document.getElementById('txt-settings-title').innerText = t.settingsTitle;
+            document.getElementById('lbl-set-review').innerText = t.setReview;
+            document.getElementById('lbl-set-referral').innerText = t.setReferral;
+            document.getElementById('lbl-set-cb').innerText = t.setCb;
+            document.getElementById('lbl-set-open').innerText = t.setOpen;
+            document.getElementById('lbl-set-close').innerText = t.setClose;
+            document.getElementById('btn-save-settings').innerText = t.saveSettingsBtn;
+            document.getElementById('lbl-set-manage-staff').innerText = t.manageStaffLbl;
+            document.getElementById('btn-add-staff').innerText = t.addStaffBtn;
+            document.getElementById('lbl-set-active-staff').innerText = t.activeStaffLbl;
+            document.getElementById('lbl-set-change-pwd').innerText = t.changePwdLbl;
+            document.getElementById('btn-update-pwd').innerText = t.updatePwdBtn;
+            document.getElementById('btn-admin-logout').innerText = t.adminLogout;
+
+            document.getElementById('mod-pwd-title').innerText = t.modPwdTitle;
+            document.getElementById('mod-pwd-desc').innerText = t.modPwdDesc;
+            document.getElementById('mod-pwd-curr').innerText = t.modPwdCurr;
+            document.getElementById('mod-pwd-new').innerText = t.modPwdNew;
+            document.getElementById('mod-pwd-repeat').innerText = t.modPwdRepeat;
+            document.getElementById('mod-pwd-save').innerText = t.modPwdSave;
+            document.getElementById('mod-pwd-cancel').innerText = t.modPwdCancel;
+
+            document.getElementById('mod-rep-title').innerText = t.modRepTitle;
+            document.getElementById('mod-rep-desc').innerText = t.modRepDesc;
+            document.getElementById('mod-rep-confirm').innerText = t.modRepConfirm;
+            document.getElementById('mod-rep-cancel').innerText = t.modRepCancel;
+
+            document.getElementById('mod-claim-title').innerText = t.modClaimTitle;
+            document.getElementById('mod-claim-desc').innerText = t.modClaimDesc;
+            document.getElementById('mod-claim-confirm').innerText = t.modClaimConfirm;
+            document.getElementById('mod-claim-cancel').innerText = t.modClaimCancel;
+
+            document.getElementById('mod-vouch-title').innerText = t.modVouchTitle;
+            document.getElementById('mod-vouch-desc').innerText = t.modVouchDesc;
+            document.getElementById('mod-vouch-done').innerText = t.modVouchDone;
+            document.getElementById('mod-img-close').innerText = t.modImgClose;
         }
 
         window.onload = function() {
@@ -1682,7 +1947,7 @@ def serve_mobile_frontend():
                 tableContainer.innerHTML = `
                     <div class="table-badge-locked">
                         <span>📍 NFC Scanned Table:</span>
-                        <span style="font-size: 0.9rem; font-weight: 800; color: white; background: var(--primary); padding: 2px 8px; border-radius: 6px;">Table ${lockedTableNumber}</span>
+                        <span style="font-size: 0.9rem; font-weight: 800; color: white; background: var(--primary); padding: 3px 10px; border-radius: 8px;">Table ${lockedTableNumber}</span>
                     </div>
                 `;
             } else {
@@ -1762,12 +2027,15 @@ def serve_mobile_frontend():
             document.getElementById('app-subtitle').innerText = role === 'admin' ? "Owner Control Center" : `Staff Portal (${name})`;
 
             const restrictedTabs = document.querySelectorAll('.admin-restricted');
+            const subnavContainer = document.getElementById('admin-subnav-container');
+
             if(role === 'worker') {
                 restrictedTabs.forEach(el => el.style.display = 'none');
                 ['menu', 'reports', 'rewards', 'analytics', 'settings'].forEach(s => {
                     const btn = document.getElementById('sub-btn-' + s);
                     if(btn) btn.style.display = 'none';
                 });
+                subnavContainer.style.gridTemplateColumns = 'repeat(2, 1fr)';
                 switchAdminSub('queue');
             } else {
                 restrictedTabs.forEach(el => el.style.display = 'block');
@@ -1775,6 +2043,7 @@ def serve_mobile_frontend():
                     const btn = document.getElementById('sub-btn-' + s);
                     if(btn) btn.style.display = 'flex';
                 });
+                subnavContainer.style.gridTemplateColumns = 'repeat(8, 1fr)';
                 switchAdminSub('queue');
                 loadDailyReport();
                 loadAdminMenu();
@@ -1788,6 +2057,14 @@ def serve_mobile_frontend():
             loadAdminFloorPlan();
             setInterval(loadAdminQueue, 5000);
             showToast(`${name} authorized successfully!`);
+        }
+
+        function logoutAdminPanel() {
+            document.getElementById('tab-admin').classList.add('hidden');
+            document.getElementById('client-nav').classList.remove('hidden');
+            document.getElementById('tab-rewards').classList.remove('hidden');
+            document.getElementById('app-subtitle').innerText = translations[currentLang].subtitle;
+            window.location.href = '/';
         }
 
         function switchAuthMode(mode) {
@@ -2253,7 +2530,7 @@ def serve_mobile_frontend():
             const box = document.getElementById('pos-cart-box');
             const keys = Object.keys(posCart);
             if(keys.length === 0) {
-                box.innerHTML = '<div style="text-align: center; color: var(--text-muted);">Cart is empty</div>';
+                box.innerHTML = '<div style="text-align: center; color: var(--text-muted);" id="txt-pos-empty">Cart is empty</div>';
                 document.getElementById('pos-total-val').innerText = '0.00 MAD';
                 return;
             }
@@ -2424,7 +2701,7 @@ def serve_mobile_frontend():
 
                 const container = document.getElementById('admin-queue-container');
                 if(!activeQueueCache || activeQueueCache.length === 0) {
-                    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.72rem; padding: 1rem 0;">☕ All quiet! No pending orders or redemptions.</div>';
+                    container.innerHTML = `<div style="text-align:center; color:var(--text-muted); font-size:0.72rem; padding: 1rem 0;" id="txt-no-orders">${translations[currentLang].noOrders}</div>`;
                     return;
                 }
                 
