@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.7.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.9.0")
 
 @app.on_event("startup")
 def startup_db():
@@ -59,6 +59,17 @@ def startup_db():
     cur.execute("INSERT INTO restaurant_workers (worker_id, password, recovery_pin, worker_name, restaurant_slug) VALUES ('staff1', 'staff123', '1234', 'Default Worker', 'default-restaurant') ON CONFLICT (worker_id) DO NOTHING;")
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS table_assignments (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50),
+            table_number VARCHAR(20) UNIQUE,
+            worker_id VARCHAR(50),
+            worker_name VARCHAR(100),
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS cashback_audit_log (
             id SERIAL PRIMARY KEY,
             restaurant_slug VARCHAR(50),
@@ -75,6 +86,19 @@ def startup_db():
             restaurant_slug VARCHAR(50),
             items_summary TEXT,
             total_amount DECIMAL(10,2),
+            table_number VARCHAR(20) DEFAULT '1',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS worker_tips (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50),
+            worker_id VARCHAR(50),
+            worker_name VARCHAR(100),
+            tip_amount DECIMAL(10,2),
+            table_number VARCHAR(20),
+            customer_phone VARCHAR(20),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -158,6 +182,11 @@ class WorkerCreate(BaseModel):
     worker_name: str
     restaurant_slug: str = "default-restaurant"
 
+class TableClaim(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    table_number: str
+    worker_id: str
+
 class AdminPasswordChange(BaseModel):
     username: str = "admin"
     old_password: str
@@ -169,36 +198,8 @@ class POSOrderCreate(BaseModel):
     total_amount: float
     table_number: str = "1"
     customer_phone: str = ""
-
-class ReviewReward(BaseModel):
-    phone_number: str
-    restaurant_slug: str = "default-restaurant"
-
-class ReferralCreate(BaseModel):
-    referrer_phone: str
-    friend_phone: str
-    restaurant_slug: str = "default-restaurant"
-
-class MenuItemCreate(BaseModel):
-    restaurant_slug: str = "default-restaurant"
-    category: str
-    name: str
-    price: str
-    image_url: str = ""
-
-class RewardCreate(BaseModel):
-    restaurant_slug: str = "default-restaurant"
-    title: str
-    points_required: int
-    image_url: str = ""
-
-class SettingsUpdate(BaseModel):
-    restaurant_slug: str = "default-restaurant"
-    review_points: int
-    referral_points: int
-    cashback_percentage: float
-    open_time: str
-    close_time: str
+    tip_amount: float = 0.00
+    worker_id: str = ""
 
 @app.get("/api/health")
 def health_check():
@@ -359,7 +360,7 @@ def worker_login(data: WorkerLogin):
         conn.close()
         if not worker or worker["password"] != data.password.strip():
             raise HTTPException(status_code=401, detail="Invalid staff credentials.")
-        return {"status": "success", "role": "worker", "worker_name": worker["worker_name"], "message": "Worker login authorized."}
+        return {"status": "success", "role": "worker", "worker_id": worker["worker_id"], "worker_name": worker["worker_name"], "message": "Worker login authorized."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -413,71 +414,46 @@ def delete_restaurant_worker(worker_id_str: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/admin/change-password")
-def admin_change_password(data: AdminPasswordChange):
+@app.post("/api/worker/claim-table")
+def claim_table_worker(data: TableClaim):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM owner_admin WHERE username = %s;", (data.username,))
-        admin = cur.fetchone()
-        if not admin or admin["password"] != data.old_password.strip():
-            raise HTTPException(status_code=401, detail="Current admin password is incorrect.")
-        
-        cur.execute("UPDATE owner_admin SET password = %s WHERE username = %s;", (data.new_password.strip(), data.username))
+        cur.execute("SELECT worker_name FROM restaurant_workers WHERE worker_id = %s;", (data.worker_id,))
+        w = cur.fetchone()
+        if not w:
+            raise HTTPException(status_code=404, detail="Worker not found.")
+        w_name = w["worker_name"]
+
+        cur.execute("""
+            INSERT INTO table_assignments (restaurant_slug, table_number, worker_id, worker_name, updated_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (table_number) 
+            DO UPDATE SET worker_id = EXCLUDED.worker_id, worker_name = EXCLUDED.worker_name, updated_at = CURRENT_TIMESTAMP;
+        """, (data.restaurant_slug, str(data.table_number), data.worker_id, w_name))
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "Admin password updated successfully!"}
+        return {"status": "success", "message": f"Table {data.table_number} claimed by {w_name}!"}
     except HTTPException as he:
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/settings/{slug}")
-def get_restaurant_settings(slug: str):
+@app.get("/api/table/assigned-server/{slug}/{table_num}")
+def get_table_server(slug: str, table_num: str):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
-        settings = cur.fetchone()
+        cur.execute("SELECT worker_id, worker_name FROM table_assignments WHERE restaurant_slug = %s AND table_number = %s;", (slug, str(table_num)))
+        assign = cur.fetchone()
         cur.close()
         conn.close()
-        if not settings:
-            return {"review_points": 50, "referral_points": 50, "cashback_percentage": 10.0, "open_time": "07:00", "close_time": "00:00"}
-        return {
-            "review_points": settings["review_points"],
-            "referral_points": settings["referral_points"],
-            "cashback_percentage": float(settings["cashback_percentage"]),
-            "open_time": settings["open_time"] or "07:00",
-            "close_time": settings["close_time"] or "00:00"
-        }
+        if not assign:
+            return {"worker_id": "", "worker_name": "General Staff"}
+        return {"worker_id": assign["worker_id"], "worker_name": assign["worker_name"]}
     except Exception:
-        return {"review_points": 50, "referral_points": 50, "cashback_percentage": 10.0, "open_time": "07:00", "close_time": "00:00"}
-
-@app.post("/api/admin/settings/update")
-def update_restaurant_settings(data: SettingsUpdate):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (data.restaurant_slug,))
-        exists = cur.fetchone()
-        if exists:
-            cur.execute("""
-                UPDATE restaurant_settings 
-                SET review_points = %s, referral_points = %s, cashback_percentage = %s, open_time = %s, close_time = %s 
-                WHERE restaurant_slug = %s;
-            """, (data.review_points, data.referral_points, data.cashback_percentage, data.open_time, data.close_time, data.restaurant_slug))
-        else:
-            cur.execute("""
-                INSERT INTO restaurant_settings (restaurant_slug, review_points, referral_points, cashback_percentage, open_time, close_time) 
-                VALUES (%s, %s, %s, %s, %s, %s);
-            """, (data.restaurant_slug, data.review_points, data.referral_points, data.cashback_percentage, data.open_time, data.close_time))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "message": "Settings updated successfully!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"worker_id": "", "worker_name": "General Staff"}
 
 @app.post("/api/admin/pos/order")
 def create_pos_order(data: POSOrderCreate):
@@ -485,15 +461,29 @@ def create_pos_order(data: POSOrderCreate):
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO pos_orders (restaurant_slug, items_summary, total_amount) VALUES (%s, %s, %s);",
-            (data.restaurant_slug, data.items_summary, data.total_amount)
+            "INSERT INTO pos_orders (restaurant_slug, items_summary, total_amount, table_number) VALUES (%s, %s, %s, %s);",
+            (data.restaurant_slug, data.items_summary, data.total_amount, str(data.table_number))
         )
+
+        w_id = data.worker_id.strip()
+        w_name = "Walk-in Staff"
+        if w_id:
+            cur.execute("SELECT worker_name FROM restaurant_workers WHERE worker_id = %s;", (w_id,))
+            w_row = cur.fetchone()
+            if w_row:
+                w_name = w_row["worker_name"]
+
+        if data.tip_amount > 0:
+            cur.execute(
+                "INSERT INTO worker_tips (restaurant_slug, worker_id, worker_name, tip_amount, table_number, customer_phone) VALUES (%s, %s, %s, %s, %s, %s);",
+                (data.restaurant_slug, w_id or "general", w_name, data.tip_amount, str(data.table_number), data.customer_phone)
+            )
 
         cur.execute(
             """INSERT INTO redemption_queue 
                (restaurant_slug, table_number, customer_name, customer_phone, reward_item, security_pin, status) 
                VALUES (%s, %s, %s, %s, %s, %s, 'pending');""",
-            (data.restaurant_slug, str(data.table_number), "Cashier / Staff", data.customer_phone or "Walk-in", f"ORDER: {data.items_summary} ({data.total_amount:.2f} MAD)", "POS")
+            (data.restaurant_slug, str(data.table_number), f"Server: {w_name}", data.customer_phone or "Walk-in", f"ORDER: {data.items_summary} ({data.total_amount:.2f} MAD) {f'+ Tip: {data.tip_amount:.2f} MAD' if data.tip_amount > 0 else ''}", "POS")
         )
 
         if data.customer_phone:
@@ -529,16 +519,74 @@ def get_daily_report(slug: str):
         
         cur.execute("SELECT COALESCE(SUM(earned_points), 0) as pts, COUNT(*) as tx_count FROM cashback_audit_log WHERE restaurant_slug = %s AND status = 'active' AND created_at >= CURRENT_DATE;", (slug,))
         cb = cur.fetchone()
+
+        cur.execute("SELECT COALESCE(SUM(tip_amount), 0) as total_tips FROM worker_tips WHERE restaurant_slug = %s AND created_at >= CURRENT_DATE;", (slug,))
+        tips_summary = cur.fetchone()
+
+        cur.execute("""
+            SELECT worker_name, COALESCE(SUM(tip_amount), 0) as worker_tips_total, COUNT(*) as tips_count 
+            FROM worker_tips 
+            WHERE restaurant_slug = %s AND created_at >= CURRENT_DATE 
+            GROUP BY worker_name ORDER BY worker_tips_total DESC;
+        """, (slug,))
+        worker_tips_breakdown = cur.fetchall()
+
+        cur.execute("""
+            SELECT id, table_number, items_summary, total_amount, created_at 
+            FROM pos_orders 
+            WHERE restaurant_slug = %s AND created_at >= CURRENT_DATE 
+            ORDER BY created_at DESC;
+        """, (slug,))
+        orders_history = cur.fetchall()
+
+        cur.execute("""
+            SELECT id, table_number, worker_name, tip_amount, customer_phone, created_at 
+            FROM worker_tips 
+            WHERE restaurant_slug = %s AND created_at >= CURRENT_DATE 
+            ORDER BY created_at DESC;
+        """, (slug,))
+        tips_history = cur.fetchall()
+
         cur.close()
         conn.close()
+
+        formatted_orders = [{
+            "id": o["id"],
+            "table_number": o["table_number"],
+            "items_summary": o["items_summary"],
+            "total_amount": float(o["total_amount"]),
+            "time": o["created_at"].strftime("%H:%M:%S")
+        } for o in orders_history]
+
+        formatted_tips = [{
+            "id": t["id"],
+            "table_number": t["table_number"],
+            "worker_name": t["worker_name"],
+            "tip_amount": float(t["tip_amount"]),
+            "customer_phone": t["customer_phone"] or "Walk-in",
+            "time": t["created_at"].strftime("%H:%M:%S")
+        } for t in tips_history]
+
+        formatted_worker_tips = [{
+            "worker_name": wt["worker_name"],
+            "total_tips": float(wt["worker_tips_total"]),
+            "tips_count": wt["tips_count"]
+        } for wt in worker_tips_breakdown]
+
         return {
             "total_revenue": float(summary["revenue"]),
             "orders_count": summary["orders_count"],
             "cashback_points_issued": cb["pts"],
-            "cashback_transactions": cb["tx_count"]
+            "total_tips_collected": float(tips_summary["total_tips"] or 0),
+            "worker_tips_breakdown": formatted_worker_tips,
+            "orders_history": formatted_orders,
+            "tips_history": formatted_tips
         }
     except Exception:
-        return {"total_revenue": 0.0, "orders_count": 0, "cashback_points_issued": 0, "cashback_transactions": 0}
+        return {
+            "total_revenue": 0.0, "orders_count": 0, "cashback_points_issued": 0, 
+            "total_tips_collected": 0.0, "worker_tips_breakdown": [], "orders_history": [], "tips_history": []
+        }
 
 @app.post("/api/admin/{slug}/reports/clear")
 def clear_daily_reports(slug: str, data: dict):
@@ -553,10 +601,11 @@ def clear_daily_reports(slug: str, data: dict):
 
         cur.execute("DELETE FROM pos_orders WHERE restaurant_slug = %s;", (slug,))
         cur.execute("DELETE FROM cashback_audit_log WHERE restaurant_slug = %s;", (slug,))
+        cur.execute("DELETE FROM worker_tips WHERE restaurant_slug = %s;", (slug,))
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "success", "message": "All reports and logs cleared successfully."}
+        return {"status": "success", "message": "All shift reports, orders, and tip logs cleared successfully."}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -843,7 +892,6 @@ def refer_friend(data: ReferralCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- FRONTEND UI WITH COMPLETE LOCALIZATION, CENTERED WORKER ICONS & LOGOUT ---
 @app.get("/", response_class=HTMLResponse)
 def serve_mobile_frontend():
     return """
@@ -955,10 +1003,10 @@ def serve_mobile_frontend():
         #toast-banner.show { transform: translateX(-50%) translateY(0); }
         #toast-banner.error { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
 
-        /* PERFECTLY CENTERED & PROFESSIONAL ADMIN / WORKER SUBNAV */
+        /* CENTERED SUBNAV */
         .admin-subnav { display: grid; gap: 4px; background: var(--bg-deep); padding: 6px; border-radius: 14px; margin-bottom: 1rem; border: 1px solid var(--border); overflow-x: auto; box-shadow: inset 0 2px 6px rgba(0,0,0,0.4); }
-        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.6rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.25s ease; }
-        .admin-sub-btn span.nav-icon { font-size: 1.1rem; margin-bottom: 3px; display: block; line-height: 1; text-align: center; width: 100%; }
+        .admin-sub-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 2px; text-align: center; border-radius: 10px; font-size: 0.58rem; font-weight: 700; color: var(--text-muted); cursor: pointer; border: none; background: transparent; transition: all 0.25s ease; }
+        .admin-sub-btn span.nav-icon { font-size: 1.05rem; margin-bottom: 3px; display: block; line-height: 1; text-align: center; width: 100%; }
         .admin-sub-btn span.nav-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; display: block; text-align: center; }
         .admin-sub-btn.active { background: var(--surface-card); color: var(--accent); border: 1px solid var(--border); box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
         
@@ -984,7 +1032,6 @@ def serve_mobile_frontend():
         .table-badge-locked { display: flex; align-items: center; justify-content: space-between; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.85rem; box-shadow: 0 4px 12px rgba(56, 189, 248, 0.1); }
         .table-badge-unlocked { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); padding: 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700; text-align: center; margin-bottom: 0.85rem; line-height: 1.4; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1); }
 
-        /* PROFESSIONAL FOOTER BAR */
         .app-footer-bar { display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 480px; margin-top: 1rem; padding: 0 0.5rem; font-size: 0.75rem; color: var(--text-muted); gap: 1rem; }
         .app-footer-bar a { color: var(--primary); text-decoration: none; font-weight: 700; white-space: nowrap; }
         .lang-selector { background: var(--surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 14px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; outline: none; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: border-color 0.2s; }
@@ -1139,6 +1186,7 @@ def serve_mobile_frontend():
                 </div>
 
                 <div id="table-selection-container"></div>
+                <div id="server-badge-container" style="margin-bottom: 0.75rem;"></div>
 
                 <div id="menu-container" class="menu-grid">
                     <div style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding: 2rem 0;">Loading menu...</div>
@@ -1149,8 +1197,11 @@ def serve_mobile_frontend():
                     <div style="text-align: center; color: var(--text-muted);" id="txt-empty-cart">Cart is empty. Tap items above to add!</div>
                 </div>
 
+                <label id="lbl-tip-amount" style="margin-top: 0.5rem;">💸 Tip Your Dedicated Server (MAD):</label>
+                <input type="number" step="5" id="app-tip-input" placeholder="e.g., 10 MAD" value="0" />
+
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem; font-weight: 800; font-size: 0.9rem;">
-                    <span id="lbl-total">Total Bill:</span>
+                    <span id="lbl-total">Total Bill (Incl. Tip):</span>
                     <span id="app-total-val" style="color: var(--accent);">0.00 MAD</span>
                 </div>
 
@@ -1169,6 +1220,12 @@ def serve_mobile_frontend():
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('reports')" id="sub-btn-reports">
                     <span class="nav-icon">📊</span><span class="nav-text" id="nav-t-reports">Reports</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('orders_history')" id="sub-btn-orders_history">
+                    <span class="nav-icon">📜</span><span class="nav-text" id="nav-t-orders_history">Orders</span>
+                </button>
+                <button class="admin-sub-btn" onclick="switchAdminSub('tips_history')" id="sub-btn-tips_history">
+                    <span class="nav-icon">💵</span><span class="nav-text" id="nav-t-tips_history">Tips</span>
                 </button>
                 <button class="admin-sub-btn" onclick="switchAdminSub('rewards')" id="sub-btn-rewards">
                     <span class="nav-icon">🎁</span><span class="nav-text" id="nav-t-rewards">Rewards</span>
@@ -1234,11 +1291,39 @@ def serve_mobile_frontend():
                         </div>
                     </div>
 
+                    <div style="background: var(--bg-deep); padding: 9px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 0.85rem; text-align: left;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;" id="lbl-rep-tips">💵 Total Tips & Worker Breakdown</div>
+                        <div id="rep-tips-total" style="font-size: 1rem; font-weight: 800; color: var(--accent); margin-bottom: 6px;">0 MAD</div>
+                        <div id="rep-worker-tips-list" style="font-size: 0.75rem; color: var(--text-main);">Loading worker tips...</div>
+                    </div>
+
                     <button class="danger-btn" onclick="openClearReportsModal()" style="width: 100%; padding: 0.55rem; font-size: 0.78rem; border-radius: 9px;" id="btn-clear-rep">🗑️ Clear / Reset Shift Data</button>
                 </div>
             </div>
 
-            <!-- 4. REWARDS -->
+            <!-- 4. ORDERS HISTORY TAB -->
+            <div id="admin-sub-orders_history" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-ord-hist-title">📜 Individual Orders History</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-ord-hist-desc">Every order recorded separately for this shift</p>
+                    <div id="admin-orders-history-list" style="max-height: 240px; overflow-y: auto;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No orders recorded yet.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. TIPS HISTORY TAB -->
+            <div id="admin-sub-tips_history" class="admin-section hidden">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-tip-hist-title">💵 Individual Tips History & Workers</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-tip-hist-desc">Every tip tracked separately by worker name</p>
+                    <div id="admin-tips-history-list" style="max-height: 240px; overflow-y: auto;">
+                        <div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No tips recorded yet.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. REWARDS -->
             <div id="admin-sub-rewards" class="admin-section hidden admin-restricted">
                 <div class="card">
                     <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-rew-builder-title">🎁 Rewards Builder</h3>
@@ -1255,7 +1340,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 5. POS -->
+            <!-- 7. POS -->
             <div id="admin-sub-pos" class="admin-section hidden">
                 <div class="card">
                     <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-pos-title">🛒 Touchscreen POS Builder</h3>
@@ -1263,12 +1348,12 @@ def serve_mobile_frontend():
                     
                     <label id="lbl-pos-table">Select Table Number / Walk-in</label>
                     <select id="pos-table-select">
-                        <option value="Table 1">Table 1</option>
-                        <option value="Table 2">Table 2</option>
-                        <option value="Table 3">Table 3</option>
-                        <option value="Table 4">Table 4</option>
-                        <option value="Table 5">Table 5</option>
-                        <option value="Table 6">Table 6</option>
+                        <option value="1">Table 1</option>
+                        <option value="2">Table 2</option>
+                        <option value="3">Table 3</option>
+                        <option value="4">Table 4</option>
+                        <option value="5">Table 5</option>
+                        <option value="6">Table 6</option>
                         <option value="VIP">VIP Lounge</option>
                         <option value="Counter">Counter / Walk-in</option>
                     </select>
@@ -1282,6 +1367,9 @@ def serve_mobile_frontend():
                         <div style="text-align: center; color: var(--text-muted);" id="txt-pos-empty">Cart is empty</div>
                     </div>
 
+                    <label id="lbl-pos-tip">Optional Tip (MAD):</label>
+                    <input type="number" id="pos-tip-input" placeholder="0" value="0" />
+
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-weight: 800; font-size: 0.9rem;">
                         <span id="lbl-pos-total">Total:</span>
                         <span id="pos-total-val" style="color: var(--accent);">0.00 MAD</span>
@@ -1291,11 +1379,11 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- FLOOR PLAN VIEW -->
+            <!-- FLOOR PLAN VIEW & TABLE CLAIMING -->
             <div id="admin-sub-floor" class="admin-section hidden">
                 <div class="card">
-                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-floor-title">🪑 Visual Table Floor Plan</h3>
-                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-floor-desc">Live status across restaurant tables</p>
+                    <h3 style="margin-bottom: 0.35rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-floor-title">🪑 Visual Table Floor Plan & Claiming</h3>
+                    <p style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.65rem;" id="txt-floor-desc">Claim tables as staff to receive direct customer tips</p>
                     <div id="admin-floor-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
                         <div style="text-align:center; color:var(--text-muted); font-size:0.72rem; grid-column: span 2;">Loading floor map...</div>
                     </div>
@@ -1326,7 +1414,7 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- 7. SETTINGS & STAFF MANAGEMENT -->
+            <!-- SETTINGS & STAFF MANAGEMENT -->
             <div id="admin-sub-settings" class="admin-section hidden admin-restricted">
                 <div class="card">
                     <h3 style="margin-bottom: 0.65rem; font-size: 0.9rem; font-weight: 700; color: var(--accent);" id="txt-settings-title">⚙️ Campaign, Shift & Staff Settings</h3>
@@ -1353,7 +1441,6 @@ def serve_mobile_frontend():
 
                     <button class="btn-main" onclick="saveCampaignSettings()" style="background: var(--accent); color: #090d16; padding: 0.65rem; font-size: 0.8rem; margin-bottom: 1rem;" id="btn-save-settings">Save Campaign Settings ✓</button>
 
-                    <!-- WORKER MANAGEMENT INSIDE SETTINGS -->
                     <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-bottom: 0.75rem;">
                         <label style="color: var(--primary);" id="lbl-set-manage-staff">👥 Manage Staff Workers (Add / Delete)</label>
                         <input type="text" id="new-worker-id" placeholder="Worker ID / Username (e.g. staff2)" />
@@ -1377,13 +1464,13 @@ def serve_mobile_frontend():
                 </div>
             </div>
 
-            <!-- ADMIN / WORKER LOGOUT BUTTON -->
+            <!-- LOGOUT BUTTON -->
             <div style="text-align: center; margin-top: 1rem;">
                 <button class="logout-btn" onclick="logoutAdminPanel()" style="width: 100%; padding: 0.7rem; font-size: 0.85rem; border-radius: 12px;" id="btn-admin-logout">🚪 Log Out of Panel</button>
             </div>
         </div>
 
-        <!-- PROFESSIONAL FOOTER BAR -->
+        <!-- FOOTER BAR -->
         <div class="app-footer-bar">
             <select id="lang-select" class="lang-selector" onchange="changeLanguage(this.value)">
                 <option value="en">🇺🇸 EN</option>
@@ -1458,9 +1545,11 @@ def serve_mobile_frontend():
         let appCart = {};
         let menuItemsCache = [];
         let lockedTableNumber = null;
+        let assignedServer = { worker_id: '', worker_name: 'General Staff' };
         let activeQueueCache = [];
         let previousQueueCount = 0;
         let currentLang = 'en';
+        let loggedWorkerId = '';
 
         const translations = {
             en: {
@@ -1493,11 +1582,13 @@ def serve_mobile_frontend():
                 menuTitle: "📖 Interactive Menu & Order",
                 yourCart: "🛒 Your App Order Cart:",
                 emptyCart: "Cart is empty. Tap items above to add!",
-                totalBill: "Total Bill:",
+                totalBill: "Total Bill (Incl. Tip):",
                 placeOrder: "Place App Order & Earn Cashback ✓",
                 navQueue: "Queue",
                 navMenu: "Menu",
                 navReports: "Reports",
+                navOrdersHist: "Orders",
+                navTipsHist: "Tips",
                 navRewards: "Rewards",
                 navPos: "POS",
                 navFloor: "Floor",
@@ -1529,8 +1620,8 @@ def serve_mobile_frontend():
                 posCartLbl: "Order Cart (Use + / - to adjust quantities):",
                 posEmpty: "Cart is empty",
                 confirmPos: "Confirm & Submit Order ✓",
-                floorTitle: "🪑 Visual Table Floor Plan",
-                floorDesc: "Live status across restaurant tables",
+                floorTitle: "🪑 Visual Table Floor Plan & Claiming",
+                floorDesc: "Claim tables as staff to receive direct customer tips",
                 analyticsTitle: "📈 Smart Analytics & CRM",
                 analyticsDesc: "Monthly performance and customer retention",
                 anaMonth: "This Month Revenue",
@@ -1600,11 +1691,13 @@ def serve_mobile_frontend():
                 menuTitle: "📖 Menu Interactif & Commande",
                 yourCart: "🛒 Votre Panier:",
                 emptyCart: "Panier vide. Touchez les articles ci-dessus !",
-                totalBill: "Total Addition :",
+                totalBill: "Total Addition (Tip Incl.) :",
                 placeOrder: "Commander & Gagner du Cashback ✓",
                 navQueue: "File",
                 navMenu: "Menu",
                 navReports: "Rapports",
+                navOrdersHist: "Commandes",
+                navTipsHist: "Pourboires",
                 navRewards: "Cadeaux",
                 navPos: "Caisse",
                 navFloor: "Salle",
@@ -1636,8 +1729,8 @@ def serve_mobile_frontend():
                 posCartLbl: "Panier (Utilisez + / - pour ajuster) :",
                 posEmpty: "Panier vide",
                 confirmPos: "Confirmer & Soumettre la Commande ✓",
-                floorTitle: "🪑 Plan de Salle Visuel",
-                floorDesc: "Statut en direct des tables",
+                floorTitle: "🪑 Plan de Salle Visuel & Attribution",
+                floorDesc: "Revendiquez les tables pour recevoir les pourboires",
                 analyticsTitle: "📈 Analyses & CRM",
                 analyticsDesc: "Performance mensuelle et rétention client",
                 anaMonth: "Revenu du Mois",
@@ -1707,11 +1800,13 @@ def serve_mobile_frontend():
                 menuTitle: "📖 القائمة التفاعلية والطلب",
                 yourCart: "🛒 سلة الطلبات:",
                 emptyCart: "السلة فارغة. انقر على الأصناف لإضافتها!",
-                totalBill: "المجموع الكلي:",
+                totalBill: "المجموع الكلي (مع الإكرامية):",
                 placeOrder: "إرسال الطلب واكتساب الكاش باك ✓",
                 navQueue: "الطلبات",
                 navMenu: "القائمة",
                 navReports: "التقارير",
+                navOrdersHist: "السجل",
+                navTipsHist: "الإكراميات",
                 navRewards: "المكافآت",
                 navPos: "الكاشير",
                 navFloor: "الطاولات",
@@ -1743,8 +1838,8 @@ def serve_mobile_frontend():
                 posCartLbl: "سلة الطلبات (استخدم + / - للتعديل):",
                 posEmpty: "السلة فارغة",
                 confirmPos: "تأكيد وإرسال الطلب ✓",
-                floorTitle: "🪑 مخطط الطاولات المرئي",
-                floorDesc: "الحالة الحية لجميع طاولات المطعم",
+                floorTitle: "🪑 مخطط الطاولات وتسجيل النادل",
+                floorDesc: "اختر طاولتك كموظف لتلقي إكراميات العملاء مباشرة",
                 analyticsTitle: "📈 التحليلات الذكية وإدارة العملاء",
                 analyticsDesc: "الأداء الشهري ومعدل الاحتفاظ بالعملاء",
                 anaMonth: "إيرادات هذا الشهر",
@@ -1797,7 +1892,6 @@ def serve_mobile_frontend():
                 document.body.classList.remove('lang-ar');
             }
 
-            // Dynamic grid layout recalculation for admin subnav based on active language/role
             const adminSubnav = document.getElementById('admin-subnav-container');
             if(adminSubnav) {
                 const visibleButtons = adminSubnav.querySelectorAll('button:not([style*="display: none"])');
@@ -1843,6 +1937,8 @@ def serve_mobile_frontend():
             document.getElementById('nav-t-queue').innerText = t.navQueue;
             document.getElementById('nav-t-menu').innerText = t.navMenu;
             document.getElementById('nav-t-reports').innerText = t.navReports;
+            document.getElementById('nav-t-orders_history').innerText = t.navOrdersHist;
+            document.getElementById('nav-t-tips_history').innerText = t.navTipsHist;
             document.getElementById('nav-t-rewards').innerText = t.navRewards;
             document.getElementById('nav-t-pos').innerText = t.navPos;
             document.getElementById('nav-t-floor').innerText = t.navFloor;
@@ -1926,7 +2022,7 @@ def serve_mobile_frontend():
             document.getElementById('mod-img-close').innerText = t.modImgClose;
         }
 
-        window.onload = function() {
+        window.onload = async function() {
             loadRestaurantSettings();
             
             const urlParams = new URLSearchParams(window.location.search);
@@ -1950,6 +2046,7 @@ def serve_mobile_frontend():
                         <span style="font-size: 0.9rem; font-weight: 800; color: white; background: var(--primary); padding: 3px 10px; border-radius: 8px;">Table ${lockedTableNumber}</span>
                     </div>
                 `;
+                await fetchAssignedServer(lockedTableNumber);
             } else {
                 tableContainer.innerHTML = `
                     <div class="table-badge-unlocked">
@@ -1965,6 +2062,21 @@ def serve_mobile_frontend():
                 loadMenu();
             }
         };
+
+        async function fetchAssignedServer(tblNum) {
+            try {
+                const res = await fetch(`/api/table/assigned-server/${currentSlug}/${tblNum}`);
+                const data = await res.json();
+                assignedServer = data;
+                const sContainer = document.getElementById('server-badge-container');
+                sContainer.innerHTML = `
+                    <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: var(--accent); padding: 8px 12px; border-radius: 10px; font-size: 0.8rem; font-weight: 700; display: flex; align-items: center; justify-content: space-between;">
+                        <span>👤 Your Dedicated Server Today:</span>
+                        <span style="background: var(--accent); color: #090d16; padding: 2px 8px; border-radius: 6px; font-weight: 800;">${assignedServer.worker_name}</span>
+                    </div>
+                `;
+            } catch(e) {}
+        }
 
         function openWorkerLoginFromAdmin() {
             document.getElementById('admin-login-modal').style.display = 'none';
@@ -1988,7 +2100,7 @@ def serve_mobile_frontend():
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    enterDashboard('admin', 'Owner Admin');
+                    enterDashboard('admin', 'Owner Admin', '');
                 } else {
                     showToast(data.detail || 'Invalid login', true);
                 }
@@ -2009,7 +2121,8 @@ def serve_mobile_frontend():
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    enterDashboard('worker', data.worker_name);
+                    loggedWorkerId = data.worker_id;
+                    enterDashboard('worker', data.worker_name, data.worker_id);
                 } else {
                     showToast(data.detail || 'Invalid worker login', true);
                 }
@@ -2018,7 +2131,7 @@ def serve_mobile_frontend():
             }
         }
 
-        function enterDashboard(role, name) {
+        function enterDashboard(role, name, wId) {
             document.getElementById('admin-login-modal').style.display = 'none';
             document.getElementById('worker-login-modal').style.display = 'none';
             document.getElementById('client-nav').classList.add('hidden');
@@ -2026,24 +2139,25 @@ def serve_mobile_frontend():
             document.getElementById('tab-admin').classList.remove('hidden');
             document.getElementById('app-subtitle').innerText = role === 'admin' ? "Owner Control Center" : `Staff Portal (${name})`;
 
+            loggedWorkerId = wId;
             const restrictedTabs = document.querySelectorAll('.admin-restricted');
             const subnavContainer = document.getElementById('admin-subnav-container');
 
             if(role === 'worker') {
                 restrictedTabs.forEach(el => el.style.display = 'none');
-                ['menu', 'reports', 'rewards', 'analytics', 'settings'].forEach(s => {
+                ['menu', 'reports', 'orders_history', 'tips_history', 'rewards', 'analytics', 'settings'].forEach(s => {
                     const btn = document.getElementById('sub-btn-' + s);
                     if(btn) btn.style.display = 'none';
                 });
-                subnavContainer.style.gridTemplateColumns = 'repeat(2, 1fr)';
+                subnavContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
                 switchAdminSub('queue');
             } else {
                 restrictedTabs.forEach(el => el.style.display = 'block');
-                ['menu', 'reports', 'rewards', 'analytics', 'settings'].forEach(s => {
+                ['menu', 'reports', 'orders_history', 'tips_history', 'rewards', 'analytics', 'settings'].forEach(s => {
                     const btn = document.getElementById('sub-btn-' + s);
                     if(btn) btn.style.display = 'flex';
                 });
-                subnavContainer.style.gridTemplateColumns = 'repeat(8, 1fr)';
+                subnavContainer.style.gridTemplateColumns = 'repeat(10, 1fr)';
                 switchAdminSub('queue');
                 loadDailyReport();
                 loadAdminMenu();
@@ -2368,11 +2482,12 @@ def serve_mobile_frontend():
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-menu').classList.remove('hidden');
                 loadMenu();
+                if(lockedTableNumber) fetchAssignedServer(lockedTableNumber);
             }
         }
 
         function switchAdminSub(subName) {
-            ['queue', 'menu', 'reports', 'rewards', 'pos', 'floor', 'analytics', 'settings'].forEach(s => {
+            ['queue', 'menu', 'reports', 'orders_history', 'tips_history', 'rewards', 'pos', 'floor', 'analytics', 'settings'].forEach(s => {
                 const btn = document.getElementById('sub-btn-' + s);
                 const sec = document.getElementById('admin-sub-' + s);
                 if(btn) btn.classList.remove('active');
@@ -2386,7 +2501,7 @@ def serve_mobile_frontend():
             if(subName === 'floor') loadAdminFloorPlan();
             if(subName === 'analytics') loadAnalytics();
             if(subName === 'pos') loadPOSMenu();
-            if(subName === 'reports') loadDailyReport();
+            if(subName === 'reports' || subName === 'orders_history' || subName === 'tips_history') loadDailyReport();
             if(subName === 'settings') loadAdminWorkers();
         }
 
@@ -2431,9 +2546,11 @@ def serve_mobile_frontend():
         function renderAppCart() {
             const box = document.getElementById('app-cart-box');
             const keys = Object.keys(appCart);
+            const tipVal = parseFloat(document.getElementById('app-tip-input').value) || 0;
+
             if(keys.length === 0) {
                 box.innerHTML = '<div style="text-align: center; color: var(--text-muted);" id="txt-empty-cart">Cart is empty. Tap items above to add!</div>';
-                document.getElementById('app-total-val').innerText = '0.00 MAD';
+                document.getElementById('app-total-val').innerText = (tipVal).toFixed(2) + ' MAD';
                 return;
             }
             let total = 0;
@@ -2443,8 +2560,10 @@ def serve_mobile_frontend():
                 total += lineTotal;
                 return `<div class="cart-row"><span>${c.qty}x ${c.name}</span><span>${lineTotal.toFixed(2)} MAD</span></div>`;
             }).join('');
-            document.getElementById('app-total-val').innerText = total.toFixed(2) + ' MAD';
+            document.getElementById('app-total-val').innerText = (total + tipVal).toFixed(2) + ' MAD';
         }
+
+        document.getElementById('app-tip-input').addEventListener('input', renderAppCart);
 
         async function submitAppOrder() {
             if(!lockedTableNumber) {
@@ -2452,7 +2571,8 @@ def serve_mobile_frontend():
                 return;
             }
             const keys = Object.keys(appCart);
-            if(keys.length === 0) { showToast('Your order cart is empty!', true); return; }
+            const tipAmt = parseFloat(document.getElementById('app-tip-input').value) || 0;
+            if(keys.length === 0 && tipAmt <= 0) { showToast('Your order cart is empty!', true); return; }
 
             let summaryParts = [];
             let total = 0;
@@ -2468,16 +2588,19 @@ def serve_mobile_frontend():
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         restaurant_slug: currentSlug,
-                        items_summary: summaryParts.join(', '),
+                        items_summary: summaryParts.join(', ') || 'Tip Only',
                         total_amount: total,
                         table_number: lockedTableNumber,
-                        customer_phone: currentPhone
+                        customer_phone: currentPhone,
+                        tip_amount: tipAmt,
+                        worker_id: assignedServer.worker_id
                     })
                 });
                 const data = await res.json();
                 if(res.ok) {
-                    showToast(`🎉 Order placed for Table ${lockedTableNumber}! Sent to kitchen.`);
+                    showToast(`🎉 Order placed for Table ${lockedTableNumber}! Tip sent to ${assignedServer.worker_name}.`);
                     appCart = {};
+                    document.getElementById('app-tip-input').value = '0';
                     renderAppCart();
                     triggerRefreshBalance();
                 } else {
@@ -2529,9 +2652,11 @@ def serve_mobile_frontend():
         function renderPOSCart() {
             const box = document.getElementById('pos-cart-box');
             const keys = Object.keys(posCart);
+            const tipVal = parseFloat(document.getElementById('pos-tip-input').value) || 0;
+
             if(keys.length === 0) {
                 box.innerHTML = '<div style="text-align: center; color: var(--text-muted);" id="txt-pos-empty">Cart is empty</div>';
-                document.getElementById('pos-total-val').innerText = '0.00 MAD';
+                document.getElementById('pos-total-val').innerText = (tipVal).toFixed(2) + ' MAD';
                 return;
             }
             let total = 0;
@@ -2550,12 +2675,15 @@ def serve_mobile_frontend():
                     </div>
                 `;
             }).join('');
-            document.getElementById('pos-total-val').innerText = total.toFixed(2) + ' MAD';
+            document.getElementById('pos-total-val').innerText = (total + tipVal).toFixed(2) + ' MAD';
         }
+
+        document.getElementById('pos-tip-input').addEventListener('input', renderPOSCart);
 
         async function confirmPOSOrder() {
             const keys = Object.keys(posCart);
-            if(keys.length === 0) { showToast('Cart is empty.', true); return; }
+            const tipAmt = parseFloat(document.getElementById('pos-tip-input').value) || 0;
+            if(keys.length === 0 && tipAmt <= 0) { showToast('Cart is empty.', true); return; }
             const chosenTable = document.getElementById('pos-table-select').value;
             let summaryParts = [];
             let total = 0;
@@ -2568,11 +2696,20 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/admin/pos/order', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ restaurant_slug: currentSlug, items_summary: summaryParts.join(', '), total_amount: total, table_number: chosenTable, customer_phone: '' })
+                    body: JSON.stringify({
+                        restaurant_slug: currentSlug,
+                        items_summary: summaryParts.join(', ') || 'POS Tip',
+                        total_amount: total,
+                        table_number: chosenTable,
+                        customer_phone: '',
+                        tip_amount: tipAmt,
+                        worker_id: loggedWorkerId
+                    })
                 });
                 if(res.ok) {
-                    showToast(`Order confirmed & sent for ${chosenTable}!`);
+                    showToast(`Order confirmed & sent for Table ${chosenTable}!`);
                     posCart = {};
+                    document.getElementById('pos-tip-input').value = '0';
                     renderPOSCart();
                     loadDailyReport();
                     loadAdminQueue();
@@ -2588,6 +2725,43 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 document.getElementById('rep-revenue').innerText = data.total_revenue.toFixed(2) + ' MAD';
                 document.getElementById('rep-orders').innerText = data.orders_count;
+                document.getElementById('rep-tips-total').innerText = data.total_tips_collected.toFixed(2) + ' MAD';
+
+                const workerListEl = document.getElementById('rep-worker-tips-list');
+                if(!data.worker_tips_breakdown || data.worker_tips_breakdown.length === 0) {
+                    workerListEl.innerHTML = '<span style="color: var(--text-muted);">No worker tips recorded yet.</span>';
+                } else {
+                    workerListEl.innerHTML = data.worker_tips_breakdown.map(wt => `
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 3px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 2px;">
+                            <span><b>${wt.worker_name}</b> (${wt.tips_count} tips):</span>
+                            <span style="color: var(--accent); font-weight: 800;">${wt.total_tips.toFixed(2)} MAD</span>
+                        </div>
+                    `).join('');
+                }
+
+                const ordersHistEl = document.getElementById('admin-orders-history-list');
+                if(!data.orders_history || data.orders_history.length === 0) {
+                    ordersHistEl.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No orders recorded yet.</div>';
+                } else {
+                    ordersHistEl.innerHTML = data.orders_history.map(o => `
+                        <div class="admin-item-row">
+                            <span><b>Table ${o.table_number}</b>: ${o.items_summary} (${o.time})</span>
+                            <span style="color: var(--success); font-weight: 800;">${o.total_amount.toFixed(2)} MAD</span>
+                        </div>
+                    `).join('');
+                }
+
+                const tipsHistEl = document.getElementById('admin-tips-history-list');
+                if(!data.tips_history || data.tips_history.length === 0) {
+                    tipsHistEl.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:0.72rem;">No tips recorded yet.</div>';
+                } else {
+                    tipsHistEl.innerHTML = data.tips_history.map(t => `
+                        <div class="admin-item-row">
+                            <span><b>Table ${t.table_number}</b> → Server: <b>${t.worker_name}</b> (${t.time})</span>
+                            <span style="color: var(--accent); font-weight: 800;">+${t.tip_amount.toFixed(2)} MAD</span>
+                        </div>
+                    `).join('');
+                }
             } catch(e) {}
         }
 
@@ -2609,7 +2783,7 @@ def serve_mobile_frontend():
                 const data = await res.json();
                 if(res.ok) {
                     document.getElementById('clear-reports-modal').style.display = 'none';
-                    showToast('Shift data cleared successfully!');
+                    showToast('Shift data & tip logs cleared successfully!');
                     loadDailyReport();
                 } else {
                     showToast(data.detail || 'Incorrect password', true);
@@ -2648,27 +2822,45 @@ def serve_mobile_frontend():
             const tables = ['1', '2', '3', '4', '5', '6', 'VIP'];
             const grid = document.getElementById('admin-floor-grid');
             
-            let tableMap = {};
-            activeQueueCache.forEach(q => {
-                tableMap[q.table_number] = q;
-            });
+            try {
+                const res = await fetch('/api/admin/workers/' + currentSlug);
+                const workers = await res.json();
 
-            grid.innerHTML = tables.map(t => {
-                const activeOrder = tableMap[t];
-                let statusClass = 'status-green';
-                let statusText = '🟢 Available';
-                if(activeOrder) {
-                    statusClass = 'status-orange';
-                    statusText = `🟠 Table ${t} Active`;
+                grid.innerHTML = tables.map(t => {
+                    return `
+                        <div class="floor-card status-green">
+                            <div style="font-size: 0.95rem; font-weight: 800; color: var(--text-main); margin-bottom: 3px;">Table ${t}</div>
+                            <select id="claim-select-table-${t}" style="padding: 4px; font-size: 0.7rem; margin-top: 4px; margin-bottom: 4px;">
+                                <option value="">-- Assign Server --</option>
+                                ${workers.map(w => `<option value="${w.worker_id}">${w.worker_name}</option>`).join('')}
+                            </select>
+                            <button class="btn-main" onclick="claimTable('${t}')" style="padding: 4px; font-size: 0.7rem; background: var(--primary); color: #090d16;">Claim Table</button>
+                        </div>
+                    `;
+                }).join('');
+            } catch(e) {}
+        }
+
+        async function claimTable(tblNum) {
+            const selectEl = document.getElementById(`claim-select-table-${tblNum}`);
+            const wId = selectEl.value;
+            if(!wId) { showToast('Please select a worker first', true); return; }
+
+            try {
+                const res = await fetch('/api/worker/claim-table', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ restaurant_slug: currentSlug, table_number: tblNum, worker_id: wId })
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    showToast(data.message);
+                } else {
+                    showToast(data.detail || 'Failed to claim table', true);
                 }
-                return `
-                    <div class="floor-card ${statusClass}">
-                        <div style="font-size: 0.95rem; font-weight: 800; color: var(--text-main); margin-bottom: 3px;">Table ${t}</div>
-                        <div style="font-size: 0.68rem; font-weight: 700;">${statusText}</div>
-                        ${activeOrder ? `<div style="font-size: 0.62rem; color: var(--accent); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${activeOrder.reward_item}</div>` : ''}
-                    </div>
-                `;
-            }).join('');
+            } catch(e) {
+                showToast('Connection error', true);
+            }
         }
 
         function playQueueBeep() {
@@ -2691,7 +2883,6 @@ def serve_mobile_frontend():
                 const res = await fetch('/api/admin/' + currentSlug + '/redemptions');
                 const data = await res.json();
                 activeQueueCache = data.queue || [];
-                loadAdminFloorPlan();
 
                 if(activeQueueCache.length > previousQueueCount && previousQueueCount !== 0) {
                     playQueueBeep();
