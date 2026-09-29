@@ -12,7 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_7aYbfrQd
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
-app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.9.0")
+app = FastAPI(title="smartTable Enterprise POS & Loyalty Engine", version="12.9.1")
 
 @app.on_event("startup")
 def startup_db():
@@ -30,12 +30,6 @@ def startup_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
-    try:
-        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS password VARCHAR(100);")
-        cur.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS recovery_pin VARCHAR(10);")
-    except Exception:
-        conn.rollback()
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS owner_admin (
             id SERIAL PRIMARY KEY,
@@ -66,6 +60,27 @@ def startup_db():
             worker_id VARCHAR(50),
             worker_name VARCHAR(100),
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS menu_items (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50),
+            category VARCHAR(50),
+            name VARCHAR(100),
+            price VARCHAR(50),
+            image_url TEXT
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS custom_rewards (
+            id SERIAL PRIMARY KEY,
+            restaurant_slug VARCHAR(50),
+            title VARCHAR(100),
+            points_required INT,
+            image_url TEXT
         );
     """)
 
@@ -200,6 +215,28 @@ class POSOrderCreate(BaseModel):
     customer_phone: str = ""
     tip_amount: float = 0.00
     worker_id: str = ""
+
+class MenuItemCreate(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    category: str
+    name: str
+    price: str
+    image_url: str = ""
+
+class RewardCreate(BaseModel):
+    restaurant_slug: str = "default-restaurant"
+    title: str
+    points_required: int
+    image_url: str = ""
+
+class ReviewReward(BaseModel):
+    phone_number: str
+    restaurant_slug: str = "default-restaurant"
+
+class ReferralCreate(BaseModel):
+    referrer_phone: str
+    friend_phone: str
+    restaurant_slug: str = "default-restaurant"
 
 @app.get("/api/health")
 def health_check():
@@ -344,6 +381,26 @@ def admin_login(data: AdminLogin):
         if not admin or admin["password"] != data.password.strip():
             raise HTTPException(status_code=401, detail="Invalid owner credentials.")
         return {"status": "success", "role": "admin", "message": "Owner login authorized."}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/change-password")
+def change_admin_password(data: AdminPasswordChange):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM owner_admin WHERE username = %s;", (data.username,))
+        admin = cur.fetchone()
+        if not admin or admin["password"] != data.old_password.strip():
+            raise HTTPException(status_code=401, detail="Current admin password incorrect.")
+        
+        cur.execute("UPDATE owner_admin SET password = %s WHERE username = %s;", (data.new_password.strip(), data.username))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Admin password updated successfully!"}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -889,6 +946,68 @@ def refer_friend(data: ReferralCreate):
         return {"status": "success", "message": "Friend registered!"}
     except HTTPException as he:
         raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/settings/{slug}")
+def get_restaurant_settings(slug: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM restaurant_settings WHERE restaurant_slug = %s;", (slug,))
+        s = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not s:
+            return {
+                "review_points": 50,
+                "referral_points": 50,
+                "cashback_percentage": 10.00,
+                "open_time": "07:00",
+                "close_time": "00:00"
+            }
+        return {
+            "review_points": s["review_points"],
+            "referral_points": s["referral_points"],
+            "cashback_percentage": float(s["cashback_percentage"]),
+            "open_time": s["open_time"],
+            "close_time": s["close_time"]
+        }
+    except Exception:
+        return {
+            "review_points": 50,
+            "referral_points": 50,
+            "cashback_percentage": 10.00,
+            "open_time": "07:00",
+            "close_time": "00:00"
+        }
+
+@app.post("/api/admin/settings/update")
+def update_restaurant_settings(data: dict):
+    slug = data.get("restaurant_slug", "default-restaurant")
+    review_pts = data.get("review_points", 50)
+    ref_pts = data.get("referral_points", 50)
+    cb_pct = data.get("cashback_percentage", 10.0)
+    open_t = data.get("open_time", "07:00")
+    close_t = data.get("close_time", "00:00")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO restaurant_settings (restaurant_slug, review_points, referral_points, cashback_percentage, open_time, close_time)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (restaurant_slug)
+            DO UPDATE SET review_points = EXCLUDED.review_points,
+                          referral_points = EXCLUDED.referral_points,
+                          cashback_percentage = EXCLUDED.cashback_percentage,
+                          open_time = EXCLUDED.open_time,
+                          close_time = EXCLUDED.close_time;
+        """, (slug, review_pts, ref_pts, cb_pct, open_t, close_t))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "message": "Campaign settings updated successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
